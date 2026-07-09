@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>풀이체커 V1</title>
+  <style>
+    :root{--bg:#f6f7fb;--card:#fff;--text:#141821;--muted:#697386;--line:#e6e8ef;--brand:#2563eb;--ok:#16a34a;--bad:#dc2626;--warn:#f59e0b}*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}.wrap{max-width:980px;margin:0 auto;padding:28px 16px 60px}.hero{display:flex;gap:12px;align-items:center;justify-content:space-between;margin-bottom:18px}.title h1{margin:0;font-size:28px}.title p{margin:6px 0 0;color:var(--muted)}.badge{background:#eaf1ff;color:#1d4ed8;padding:8px 12px;border-radius:999px;font-weight:700;font-size:13px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}@media(max-width:760px){.grid{grid-template-columns:1fr}.hero{align-items:flex-start;flex-direction:column}}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;box-shadow:0 10px 28px rgba(20,24,33,.06);padding:18px}.upload{border:2px dashed #b9c3d6;border-radius:16px;padding:22px;text-align:center;background:#fbfcff}.upload.drag{border-color:var(--brand);background:#eef5ff}.upload input{display:none}.btn{border:0;border-radius:12px;padding:12px 16px;font-weight:800;cursor:pointer}.primary{background:var(--brand);color:white}.secondary{background:#eef1f6;color:#111827}.btn:disabled{opacity:.55;cursor:not-allowed}.row{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:14px}.preview{margin-top:14px;display:none}.preview img{max-width:100%;border-radius:14px;border:1px solid var(--line)}.hint{font-size:13px;color:var(--muted);line-height:1.55}.result{white-space:pre-wrap;line-height:1.65;font-size:16px;min-height:260px}.result.ok{border-left:5px solid var(--ok);padding-left:14px}.result.bad{border-left:5px solid var(--bad);padding-left:14px}.result.wait{color:var(--muted)}.pill{display:inline-block;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:800;margin-bottom:8px;background:#eef1f6}.footer{margin-top:16px;color:var(--muted);font-size:13px}.loader{display:none;margin-top:12px;color:var(--brand);font-weight:800}.err{color:var(--bad);font-weight:800}.small{font-size:12px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="title">
+        <h1>풀이체커 V1</h1>
+        <p>계산 실수와 빨간색급 논리 비약만 빠르게 확인합니다.</p>
+      </div>
+      <div class="badge">Teacher App</div>
+    </section>
+
+    <section class="grid">
+      <div class="card">
+        <div id="drop" class="upload">
+          <h2>사진 업로드</h2>
+          <p class="hint">학생 풀이 사진을 올리세요. 한 장씩 검사하는 V1입니다.</p>
+          <input id="file" type="file" accept="image/*" />
+          <div class="row">
+            <button class="btn secondary" id="pick">사진 선택</button>
+            <button class="btn primary" id="analyze" disabled>분석하기</button>
+          </div>
+          <div id="loader" class="loader">분석 중...</div>
+        </div>
+        <div id="preview" class="preview"><img id="img" alt="업로드 이미지" /></div>
+        <p class="footer">정상 풀이면 짧게 표시하고, 문제가 있을 때만 해당 부분을 알려줍니다.</p>
+      </div>
+
+      <div class="card">
+        <span class="pill">분석 결과</span>
+        <div id="result" class="result wait">아직 분석 전입니다.</div>
+        <div class="row">
+          <button class="btn secondary" id="copy" disabled>결과 복사</button>
+          <button class="btn secondary" id="reset" disabled>초기화</button>
+        </div>
+        <p class="small">사진이 흐리면 “판독 불가”가 나올 수 있습니다.</p>
+      </div>
+    </section>
+  </main>
+
+<script>
+const fileInput=document.getElementById('file');
+const pick=document.getElementById('pick');
+const analyze=document.getElementById('analyze');
+const preview=document.getElementById('preview');
+const img=document.getElementById('img');
+const result=document.getElementById('result');
+const loader=document.getElementById('loader');
+const copy=document.getElementById('copy');
+const reset=document.getElementById('reset');
+const drop=document.getElementById('drop');
+let selectedFile=null;
+
+pick.onclick=()=>fileInput.click();
+fileInput.onchange=e=>handleFile(e.target.files[0]);
+['dragenter','dragover'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('drag')}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')}));
+drop.addEventListener('drop',e=>handleFile(e.dataTransfer.files[0]));
+
+function handleFile(file){
+  if(!file || !file.type.startsWith('image/')) return alert('이미지 파일만 올려주세요.');
+  selectedFile=file;
+  const url=URL.createObjectURL(file);
+  img.src=url; preview.style.display='block'; analyze.disabled=false; reset.disabled=false;
+  result.className='result wait'; result.textContent='사진이 준비되었습니다. 분석하기를 눌러주세요.'; copy.disabled=true;
+}
+
+function toBase64(file){
+  return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+}
+
+analyze.onclick=async()=>{
+  if(!selectedFile)return;
+  loader.style.display='block'; analyze.disabled=true; result.className='result wait'; result.textContent='분석 중입니다...'; copy.disabled=true;
+  try{
+    const image=await toBase64(selectedFile);
+    const res=await fetch('/.netlify/functions/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({image})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error || '분석 실패');
+    const text=data.result || '판독 불가';
+    result.textContent=text;
+    result.className='result '+(text.includes('❌')||text.includes('🔴')?'bad':'ok');
+    copy.disabled=false;
+  }catch(err){
+    result.className='result'; result.innerHTML='<span class="err">오류: '+escapeHtml(err.message)+'</span>\n\n환경변수 OPENAI_API_KEY와 OPENAI_MODEL을 확인하세요.';
+  }finally{loader.style.display='none'; analyze.disabled=false;}
+};
+copy.onclick=()=>navigator.clipboard.writeText(result.textContent);
+reset.onclick=()=>{selectedFile=null;fileInput.value='';preview.style.display='none';analyze.disabled=true;reset.disabled=true;copy.disabled=true;result.className='result wait';result.textContent='아직 분석 전입니다.'};
+function escapeHtml(s){return s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+</script>
+</body>
+</html>
