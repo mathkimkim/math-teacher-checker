@@ -1,16 +1,17 @@
 {
-  "name": "math-checker-deploy",
-  "version": "1.0.0",
+  "name": "math-teacher-checker",
+  "version": "0.2.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "netlify dev",
-    "build": "echo 'static app - no build needed'"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "openai": "^4.104.0"
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest"
   },
-  "devDependencies": {
-    "netlify-cli": "^17.38.1"
-  }
+  "devDependencies": {}
 }
