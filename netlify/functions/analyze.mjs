@@ -28,10 +28,9 @@ const schema = {
         additionalProperties: false,
         properties: {
           line: { type: "string" },
-          issue: { type: "string" },
-          needed_step: { type: "string" }
+          issue: { type: "string" }
         },
-        required: ["line", "issue", "needed_step"]
+        required: ["line", "issue"]
       }
     },
     teacher_note: { type: "string" },
@@ -53,6 +52,7 @@ const systemPrompt = `너는 수학학원 선생님의 풀이 검토 보조 AI�
 - 계산 실수와 논리 비약이 명확하지 않으면 추측하지 않는다.
 - 사진이 흐리거나 문제와 풀이가 충분히 보이지 않으면 판독 불가로 처리한다.
 - 긴 해설, 모범풀이, 성향 분석, 학습법 추천은 하지 않는다.
+- 논리 비약은 위치와 문제점만 기록하고, 필요한 과정이나 보충 풀이를 출력하지 않는다.
 - 출력은 지정된 JSON 형식만 사용한다.`;
 
 function responseJson(data, status = 200) {
