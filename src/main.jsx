@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import './styles.css';
 
 const MAX_FILES = 6;
+const MAX_IMAGE_SIDE = 1800;
+const JPEG_QUALITY = 0.84;
 
 function formatBytes(bytes) {
   if (!bytes) return '0 B';
@@ -11,10 +13,149 @@ function formatBytes(bytes) {
   return `${(bytes / Math.pow(1024, i)).toFixed(i ? 1 : 0)} ${units[i]}`;
 }
 
+function resultIsClean(result) {
+  return result?.verdict === '맞음' && !result?.has_calculation_mistakes && !result?.has_logical_gaps;
+}
+
+function statusLabel(status) {
+  switch (status) {
+    case 'ready': return '대기';
+    case 'compressing': return '준비중';
+    case 'analyzing': return '분석중';
+    case 'done': return '완료';
+    case 'error': return '오류';
+    default: return '대기';
+  }
+}
+
+function getVerdictClass(result) {
+  if (!result) return '';
+  if (result.verdict === '맞음') return 'ok';
+  if (result.verdict === '틀림') return 'bad';
+  if (result.verdict === '판독 불가') return 'neutral';
+  return 'warn';
+}
+
+function compressImageToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      try {
+        const ratio = Math.min(1, MAX_IMAGE_SIDE / Math.max(img.width, img.height));
+        const width = Math.max(1, Math.round(img.width * ratio));
+        const height = Math.max(1, Math.round(img.height * ratio));
+
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        URL.revokeObjectURL(objectUrl);
+
+        const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
+        resolve(dataUrl);
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        reject(error);
+      }
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('이미지를 읽지 못했습니다. JPG/PNG 파일로 다시 시도하세요.'));
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+function MistakeList({ title, type, items, emptyText }) {
+  if (!items?.length) {
+    return (
+      <div className="resultBlock cleanBlock">
+        <span>{title}</span>
+        <p>{emptyText}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`resultBlock ${type}`}>
+      <span>{title}</span>
+      <ol className="issueList">
+        {items.map((item, index) => (
+          <li key={index}>
+            {type === 'calc' ? (
+              <>
+                <b>{item.line || '위치 확인 필요'}</b>
+                <div className="expr wrong">학생: {item.student_expression || '-'}</div>
+                <div className="expr correct">수정: {item.correct_expression || '-'}</div>
+                {item.reason && <p>{item.reason}</p>}
+              </>
+            ) : (
+              <>
+                <b>{item.line || '위치 확인 필요'}</b>
+                <p>{item.issue || '선생님 확인이 필요한 논리 비약이 있습니다.'}</p>
+                {item.needed_step && <div className="expr correct">필요 과정: {item.needed_step}</div>}
+              </>
+            )}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function ResultCard({ item, onCopy }) {
+  const r = item.result;
+  if (!r) return null;
+  const clean = resultIsClean(r);
+
+  return (
+    <div className="result">
+      <div className={`verdict ${getVerdictClass(r)}`}>
+        {r.display_verdict || '⚠️ 풀이 확인 필요'}
+      </div>
+
+      {clean ? (
+        <div className="oneLine">계산 실수 없음</div>
+      ) : (
+        <>
+          <MistakeList
+            title="계산 실수"
+            type="calc"
+            items={r.calculation_mistakes}
+            emptyText="없음"
+          />
+          {r.logical_gaps?.length > 0 && (
+            <MistakeList
+              title="🔴 논리 비약 발견"
+              type="logic"
+              items={r.logical_gaps}
+              emptyText=""
+            />
+          )}
+        </>
+      )}
+
+      {r.teacher_note && <div className="teacherNote">{r.teacher_note}</div>}
+
+      <div className="resultMeta">
+        <span>판독: {r.readability || '보통'}</span>
+        <span>확신도: {r.confidence ?? 0}%</span>
+      </div>
+
+      <button className="copy" onClick={onCopy}>결과 복사</button>
+    </div>
+  );
+}
+
 function App() {
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
-  const [globalError, setGlobalError] = useState('');
+  const [dragging, setDragging] = useState(false);
   const inputRef = useRef(null);
 
   const canAnalyze = useMemo(() => items.length > 0 && !busy, [items, busy]);
@@ -49,35 +190,37 @@ function App() {
   function clearAll() {
     items.forEach((x) => x.preview && URL.revokeObjectURL(x.preview));
     setItems([]);
-    setGlobalError('');
   }
 
-  function fileToDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
+  async function analyzeOne(item) {
+    setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'compressing', error: '', result: null } : x));
+
+    const imageDataUrl = await compressImageToDataUrl(item.file);
+
+    setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'analyzing' } : x));
+
+    const res = await fetch('/.netlify/functions/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imageDataUrl, fileName: item.name })
     });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const help = data?.help ? `\n${data.help}` : '';
+      throw new Error(`${data?.error || `분석 실패 (${res.status})`}${help}`);
+    }
+    return data;
   }
 
   async function analyzeAll() {
     if (!items.length || busy) return;
     setBusy(true);
-    setGlobalError('');
 
     for (const item of items) {
-      setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'analyzing', error: '', result: null } : x));
       try {
-        const imageDataUrl = await fileToDataUrl(item.file);
-        const res = await fetch('/.netlify/functions/analyze', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ imageDataUrl, fileName: item.name })
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data?.error || `분석 실패 (${res.status})`);
-        setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'done', result: data, error: '' } : x));
+        const result = await analyzeOne(item);
+        setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'done', result, error: '' } : x));
       } catch (error) {
         setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'error', error: error.message || '분석 실패' } : x));
       }
@@ -89,15 +232,34 @@ function App() {
   function copyResult(item) {
     const r = item.result;
     if (!r) return;
-    const text = [
-      r.verdict || '',
-      '',
-      `계산 실수: ${r.calculation_mistakes || '없음'}`,
-      r.logic_gap ? `\n🔴 논리 비약 발견\n${r.logic_gap}` : '',
-      r.note ? `\n메모: ${r.note}` : ''
-    ].join('\n').trim();
-    navigator.clipboard.writeText(text);
+
+    const lines = [r.display_verdict || '⚠️ 풀이 확인 필요'];
+
+    if (r.calculation_mistakes?.length) {
+      lines.push('', '계산 실수');
+      r.calculation_mistakes.forEach((m, i) => {
+        lines.push(`${i + 1}. ${m.line || ''}`.trim());
+        lines.push(`학생: ${m.student_expression || '-'}`);
+        lines.push(`수정: ${m.correct_expression || '-'}`);
+      });
+    } else {
+      lines.push('', '계산 실수: 없음');
+    }
+
+    if (r.logical_gaps?.length) {
+      lines.push('', '🔴 논리 비약 발견');
+      r.logical_gaps.forEach((g, i) => {
+        lines.push(`${i + 1}. ${g.line || ''} ${g.issue || ''}`.trim());
+        if (g.needed_step) lines.push(`필요 과정: ${g.needed_step}`);
+      });
+    }
+
+    if (r.teacher_note) lines.push('', `메모: ${r.teacher_note}`);
+    navigator.clipboard.writeText(lines.join('\n').trim());
   }
+
+  const cleanCount = items.filter((x) => resultIsClean(x.result)).length;
+  const reviewCount = items.filter((x) => x.result && !resultIsClean(x.result)).length;
 
   return (
     <main className="app">
@@ -105,21 +267,23 @@ function App() {
         <div>
           <p className="eyebrow">Teacher AI Math Checker</p>
           <h1>풀이체커</h1>
-          <p className="sub">학생 풀이 사진을 올리면 계산 실수와 빨간색급 논리 비약만 빠르게 확인합니다.</p>
+          <p className="sub">학생 풀이 사진을 올리면 계산 실수와 빨간색급 논리 비약만 표시합니다. 정상 풀이면 한 줄만 보여줍니다.</p>
         </div>
-        <div className="badge">Day2 배포 안정 버전</div>
+        <div className="badge">Day3 누적 버전</div>
       </section>
 
       <section
-        className="dropzone"
+        className={`dropzone ${dragging ? 'dragging' : ''}`}
         onClick={() => inputRef.current?.click()}
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
       >
         <input ref={inputRef} type="file" accept="image/*" multiple hidden onChange={(e) => addFiles(e.target.files)} />
         <div className="uploadIcon">📷</div>
         <h2>사진 업로드</h2>
         <p>클릭하거나 이미지를 드래그하세요. 최대 {MAX_FILES}장까지 가능.</p>
+        <small>업로드 전 이미지를 자동으로 줄여 API 사용량을 줄입니다.</small>
       </section>
 
       <div className="actions">
@@ -127,14 +291,20 @@ function App() {
         <button className="ghost" disabled={busy || !items.length} onClick={clearAll}>전체 삭제</button>
       </div>
 
-      {globalError && <div className="errorBox">{globalError}</div>}
+      {items.some((x) => x.result) && (
+        <section className="summary">
+          <div><b>{items.length}</b><span>전체</span></div>
+          <div><b>{cleanCount}</b><span>정상</span></div>
+          <div><b>{reviewCount}</b><span>확인 필요</span></div>
+        </section>
+      )}
 
       <section className="grid">
         {items.map((item, idx) => (
           <article className="card" key={item.id}>
             <div className="thumbWrap">
               <img src={item.preview} alt={item.name} />
-              <span className={`status ${item.status}`}>{item.status === 'ready' ? '대기' : item.status === 'analyzing' ? '분석중' : item.status === 'done' ? '완료' : '오류'}</span>
+              <span className={`status ${item.status}`}>{statusLabel(item.status)}</span>
             </div>
             <div className="cardBody">
               <div className="row between">
@@ -144,33 +314,11 @@ function App() {
               <p className="meta">{item.name} · {formatBytes(item.size)}</p>
 
               {item.status === 'ready' && <p className="muted">분석 대기 중</p>}
-              {item.status === 'analyzing' && <p className="muted">AI가 풀이를 확인하는 중...</p>}
+              {item.status === 'compressing' && <p className="muted">이미지 전송 준비 중...</p>}
+              {item.status === 'analyzing' && <p className="muted">AI가 계산 실수와 논리 비약만 확인하는 중...</p>}
               {item.status === 'error' && <div className="errorBox small">{item.error}</div>}
 
-              {item.result && (
-                <div className="result">
-                  <div className={item.result.verdict?.includes('틀림') || item.result.verdict?.includes('확인') ? 'verdict warn' : 'verdict ok'}>
-                    {item.result.verdict || '판정 없음'}
-                  </div>
-                  <div className="resultBlock">
-                    <span>계산 실수</span>
-                    <p>{item.result.calculation_mistakes || '없음'}</p>
-                  </div>
-                  {item.result.logic_gap && (
-                    <div className="resultBlock logic">
-                      <span>🔴 논리 비약 발견</span>
-                      <p>{item.result.logic_gap}</p>
-                    </div>
-                  )}
-                  {item.result.note && (
-                    <div className="resultBlock">
-                      <span>메모</span>
-                      <p>{item.result.note}</p>
-                    </div>
-                  )}
-                  <button className="copy" onClick={() => copyResult(item)}>결과 복사</button>
-                </div>
-              )}
+              {item.result && <ResultCard item={item} onCopy={() => copyResult(item)} />}
             </div>
           </article>
         ))}
