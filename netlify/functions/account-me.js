@@ -1,0 +1,2 @@
+import { json, getSessionAccount } from './_common.js';
+export async function handler(event){try{const s=await getSessionAccount(event);if(!s) return json(401,{error:'로그인이 필요합니다.'});if(!s.account.active)return json(403,{error:'사용이 중지된 계정입니다.'});return json(200,{account:s.account});}catch(e){return json(500,{error:e.message});}}
