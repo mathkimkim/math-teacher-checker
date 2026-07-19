@@ -1,0 +1,2 @@
+import { json, db, bearer, tokenHash } from './_common.js';
+export async function handler(event){try{const t=bearer(event);if(t)await db(`account_sessions?token_hash=eq.${encodeURIComponent(tokenHash(t))}`,{method:'DELETE',prefer:'return=minimal'});return json(200,{ok:true});}catch(e){return json(200,{ok:true});}}
