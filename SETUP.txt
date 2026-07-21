@@ -1,0 +1,51 @@
+풀이체커 관리자 발급 계정·분석 장수 관리 버전
+
+1. Supabase Dashboard → SQL Editor에서 SUPABASE_SETUP.sql 전체를 실행합니다.
+기존 설치자는 이어서 MODEL_USAGE_UPDATE.sql도 한 번 실행합니다.
+
+2. Netlify 환경변수에 다음을 등록합니다.
+GEMINI_API_KEY=Google AI Studio에서 발급받은 Gemini API 키
+SUPABASE_URL=https://nkoooncnmxabzoajsdpa.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=Supabase 관리자용 service_role/secret 키
+ADMIN_ID=관리자 아이디
+ADMIN_PASSWORD=관리자 비밀번호
+
+주의: SUPABASE_SERVICE_ROLE_KEY와 ADMIN_PASSWORD는 GitHub에 올리지 마세요.
+
+3. 설치
+npm install --registry=https://registry.npmjs.org/ --replace-registry-host=always
+netlify dev
+
+4. 관리자 페이지
+http://localhost:8888/admin
+배포 후: https://mathsolchecker.netlify.app/admin
+
+5. 정책
+- 관리자가 아이디·비밀번호를 발급합니다.
+- 사진 한 장의 분석 요청이 시작되는 즉시 사용량 1장이 차감됩니다.
+- 분석 성공, 시간 초과, max_output_tokens, API 오류 등 결과와 관계없이 복구하지 않습니다.
+- 관리자 페이지에서 한도 추가, 총 한도 변경, 전체 초기화, Excel 내려받기, 비밀번호 변경, 사용 중지/재개, 삭제가 가능합니다.
+
+
+6. 아이디별 누적토큰
+- 최신 SUPABASE_SETUP.sql을 다시 실행해 accounts.total_tokens 필드를 추가합니다.
+- 새 분석에 사용된 실제 API 토큰이 로그인 아이디별로 누적됩니다.
+- 상단에는 사용 / 한도 / 누적토큰 순서로 표시됩니다.
+- 과거 토큰은 기록이 없어 0부터 시작합니다.
+
+
+## 입력·출력 토큰 누적
+- `accounts.total_input_tokens`: 아이디별 누적 입력 토큰
+- `accounts.total_output_tokens`: 아이디별 누적 출력 토큰
+- `accounts.total_tokens`: 아이디별 전체 누적 토큰
+- 일반 분석의 실제 Gemini API usageMetadata 값이 누적됩니다.
+- 기존 사용자도 배포 전에 `SUPABASE_SETUP.sql`을 SQL Editor에서 다시 실행해야 합니다.
+- 이전에 이미 누적된 전체 토큰은 입력/출력으로 소급 분리할 수 없으며, 새 필드는 배포 이후부터 누적됩니다.
+
+
+## 관리자 모델별 토큰·비용 표시
+- 일반 사용자 화면에는 사용 장수와 한도만 표시됩니다.
+- 입력토큰, 출력토큰, 누적토큰, 누적 예상비용(USD)은 `/admin`에서만 확인합니다.
+- 모든 분석은 Gemini 3.1 Pro Preview를 사용합니다.
+- 입력·일반 출력·추론 토큰을 분리해 analysis_usage 테이블에 저장합니다.
+- 비용은 분석 당시 공식 Standard 단가로 저장되는 예상액입니다.

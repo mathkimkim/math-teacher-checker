@@ -1,0 +1,39 @@
+풀이체커 Supabase 회원가입/로그인 설정
+
+1. Supabase Dashboard → Authentication → URL Configuration
+2. Site URL:
+   https://mathsolchecker.netlify.app
+3. Redirect URLs에 아래 주소 추가:
+   https://mathsolchecker.netlify.app/**
+   http://localhost:8888/**
+   http://localhost:5173/**
+
+설치
+1. 기존 프로젝트에 ZIP의 파일을 덮어씁니다.
+2. 기존 package-lock.json은 삭제합니다.
+3. 아래 명령을 실행합니다.
+
+npm install --registry=https://registry.npmjs.org/ --replace-registry-host=always
+netlify dev
+
+포함 기능
+- 이메일 회원가입
+- 비밀번호 확인
+- 이메일 인증 안내
+- 이메일/비밀번호 로그인
+- 로그인 유지
+- 로그아웃
+- 비로그인 사용자의 분석 API 접근 차단
+
+주의
+- Secret key 또는 service_role key는 코드에 넣지 마세요.
+- ZIP에는 공개용 Publishable Key만 포함되어 있습니다.
+
+
+## 입력·출력 토큰 누적
+- `accounts.total_input_tokens`: 아이디별 누적 입력 토큰
+- `accounts.total_output_tokens`: 아이디별 누적 출력 토큰
+- `accounts.total_tokens`: 아이디별 전체 누적 토큰
+- 일반 분석의 실제 Gemini API usageMetadata 값이 누적됩니다.
+- 기존 사용자도 배포 전에 `SUPABASE_SETUP.sql`을 SQL Editor에서 다시 실행해야 합니다.
+- 이전에 이미 누적된 전체 토큰은 입력/출력으로 소급 분리할 수 없으며, 새 필드는 배포 이후부터 누적됩니다.
