@@ -1206,6 +1206,21 @@ a { color: inherit; }
 .userEmail { max-width:210px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#64748b; font-size: 22px; font-weight:800; }
 .logoutButton { min-height:40px; padding:0 13px; border-radius:12px; color:#334155; background:#e9eef4; font-size: 23px; font-weight:900; cursor:pointer; }
 .topbarLoginButton { min-height:40px; padding:0 16px; border-radius:12px; color:#fff; background:linear-gradient(135deg,var(--brand),#20845f); font-size:22px; font-weight:950; cursor:pointer; box-shadow:0 7px 16px rgba(23,107,77,.18); }
+.topbarTrialButton {
+  min-height: 40px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 12px;
+  color: #241d00;
+  background: #fee500;
+  box-shadow: 0 7px 16px rgba(123, 101, 0, .14);
+  font-size: 20px;
+  font-weight: 950;
+  text-decoration: none;
+}
 .loginModalBackdrop { position:fixed; inset:0; z-index:500; display:grid; place-items:center; padding:18px; background:rgba(15,23,42,.64); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px); }
 .loginModalCard { position:relative; max-height:calc(100vh - 36px); overflow:auto; }
 .loginModalClose { position:absolute; top:15px; right:15px; width:38px; height:38px; display:grid; place-items:center; border-radius:50%; color:#475569; background:#edf2f7; cursor:pointer; font-size:29px; line-height:1; }
@@ -1358,6 +1373,7 @@ a { color: inherit; }
   .userEmail { display: none; }
   .logoutButton { grid-area: logout; }
   .topbarLoginButton { grid-area: logout; }
+  .topbarTrialButton { grid-area: logout; }
   .inquiryButton {
     grid-area: inquiry;
     display: inline-flex !important;
@@ -1732,6 +1748,24 @@ a { color: inherit; }
 .stopSquare { width: 11px; height: 11px; border-radius: 2px; background: currentColor; }
 
 /* 학생 이름과 분석 결과 */
+.studentNameEntry {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: end;
+  gap: 8px 12px;
+  margin: 14px 0;
+  padding: 15px 17px;
+  border: 1px solid #dce9e2;
+  border-radius: 17px;
+  background: #f7fcf9;
+}
+.studentNameEntry label span { display: block; margin-bottom: 6px; color: #355b49; font-size: 16px; font-weight: 950; }
+.studentNameEntry input { width: 100%; min-height: 45px; padding: 0 13px; border: 1px solid #bfd4c9; border-radius: 12px; outline: none; background: #fff; font-size: 17px; font-weight: 800; }
+.studentNameEntry input:focus { border-color: #48a77e; box-shadow: 0 0 0 3px rgba(72,167,126,.12); }
+.studentNameEntry small { grid-column: 1; color: #718078; font-size: 14px; font-weight: 750; }
+.studentNameActions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 7px; }
+.studentNameActions button { min-height: 45px; padding: 0 14px; border-radius: 12px; color: #fff; background: var(--brand); cursor: pointer; font-size: 15px; font-weight: 950; }
+.studentNameActions .allStudentRecordsButton { color: #176b4d; border: 1px solid #a9ddc3; background: #effaf5; }
 .studentResultIdentity {
   min-width: 150px;
   display: flex !important;
@@ -1822,6 +1856,56 @@ a { color: inherit; }
   font-size: 19px;
   font-weight: 950;
 }
+.weeklyLoading { margin: 24px 0; color: #64748b; text-align: center; font-weight: 850; }
+.weeklyComparisonTitle { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 20px; }
+.weeklyComparisonTitle strong { font-size: 19px; }
+.weeklyComparisonTitle span { color: #748078; font-size: 13px; font-weight: 800; }
+.weeklyComparisonTable { margin-top: 9px; overflow: hidden; border: 1px solid #e1e8e4; border-radius: 15px; }
+.weeklyComparisonTable > div { display: grid; grid-template-columns: 1.25fr .8fr .8fr .8fr; align-items: center; min-height: 43px; padding: 0 11px; border-top: 1px solid #e8eeeb; }
+.weeklyComparisonTable > div:first-child { border-top: 0; }
+.weeklyComparisonTable span { color: #475569; font-size: 14px; font-weight: 850; }
+.weeklyComparisonTable b { text-align: center; font-size: 14px; }
+.weeklyComparisonTable em { text-align: center; font-size: 14px; font-style: normal; font-weight: 950; }
+.weeklyComparisonTable .weeklyHead { min-height: 38px; background: #f3f8f5; }
+.weeklyComparisonTable .weeklyHead b { color: #617068; font-size: 13px; }
+.weeklyComparisonTable .improved { color: #15803d; }
+.weeklyComparisonTable .declined { color: #dc2626; }
+.weeklyComparisonTable .same { color: #7b8791; }
+.weeklyComparisonTable .neutral { color: #2563a8; }
+.weeklyParentReport { margin-top: 14px; padding: 16px; border-radius: 15px; background: #f8fafc; }
+.weeklyParentReport > strong { display: block; margin-bottom: 8px; font-size: 17px; }
+.weeklyParentReport p { margin: 5px 0; color: #475569; font-size: 15px; font-weight: 700; line-height: 1.55; }
+.studentRecordsDialog { width: min(720px, 100%); max-height: min(780px, calc(100vh - 36px)); overflow: auto; padding: 24px; border-radius: 24px; background: #fff; box-shadow: 0 28px 70px rgba(15,23,42,.25); }
+.studentRecordsDialog header { display: flex; align-items: flex-start; justify-content: space-between; }
+.studentRecordsDialog header span { display: block; color: var(--brand); font-size: 15px; font-weight: 950; }
+.studentRecordsDialog header strong { display: block; margin-top: 4px; font-size: 28px; }
+.studentRecordsDialog header button { width: 38px; height: 38px; border-radius: 50%; color: #475569; background: #eef2f6; cursor: pointer; font-size: 27px; }
+.studentRecordList { display: grid; gap: 9px; margin-top: 18px; }
+.studentRecordList article { display: flex; align-items: stretch; gap: 8px; padding: 11px; border: 1px solid #e1e9e5; border-radius: 15px; background: #fbfdfc; }
+.studentRecordMain { flex: 1; min-width: 0; text-align: left; background: transparent; cursor: pointer; }
+.studentRecordMain strong { display: block; color: #17221d; font-size: 19px; }
+.studentRecordMain span { display: block; margin-top: 5px; color: #355b49; font-size: 15px; font-weight: 850; }
+.studentRecordMain small { display: block; margin-top: 3px; color: #748078; font-size: 13px; font-weight: 750; }
+.studentRecordDelete { flex: none; padding: 0 12px; border-radius: 11px; color: #b42318; background: #fff1f0; cursor: pointer; font-weight: 900; }
+.studentRecordsEmpty { margin-top: 20px; padding: 34px 15px; border-radius: 15px; color: #64748b; background: #f8fafc; text-align: center; font-weight: 800; }
+.studentRetentionNote { margin: 14px 0 0; color: #7b8791; text-align: center; font-size: 13px; font-weight: 750; }
+.studentAccessDialog { width:min(900px,100%); max-height:calc(100vh - 36px); overflow:auto; padding:24px; border-radius:24px; background:#fff; box-shadow:0 28px 70px rgba(15,23,42,.25); }
+.studentAccessDialog header,.studentPortalTop,.accessStudentHead { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.studentAccessDialog header span { display:block; color:var(--brand); font-weight:900; }
+.studentAccessDialog header strong { display:block; font-size:28px; }
+.studentAccessDialog header>button { width:38px;height:38px;border-radius:50%;font-size:26px; }
+.studentCreateRow { display:flex; gap:8px; margin-top:18px; }
+.studentCreateRow input { flex:1; min-height:44px; padding:0 12px; border:1px solid #cbd8d1; border-radius:11px; font-size:16px; }
+.studentCreateRow button,.issuedCode button,.accessStudentHead button { padding:0 13px; min-height:40px; border-radius:10px; color:#fff; background:var(--brand); font-weight:900; cursor:pointer; }
+.issuedCode { margin-top:12px; padding:14px; border-radius:14px; background:#effaf5; }
+.issuedCode>div { display:flex; align-items:baseline; gap:12px; }.issuedCode span{font-weight:800}.issuedCode strong{font-size:28px;letter-spacing:.12em}.issuedCode small{display:block;margin-top:6px;color:#64748b}
+.accessStudentList { display:grid; gap:12px; margin-top:16px; }.accessStudentList>article{padding:14px;border:1px solid #dde7e2;border-radius:15px}.accessStudentHead>div{flex:1}.accessStudentHead strong,.accessStudentHead span{display:block}.accessStudentHead span{margin-top:3px;color:#64748b;font-size:13px;font-weight:750}
+.submissionGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:11px}.submissionCard{display:grid;grid-template-columns:105px 1fr;gap:9px;padding:9px;border-radius:12px;background:#f8fafc}.submissionImage{padding:0;background:transparent;cursor:pointer}.submissionImage img{width:105px;height:105px;object-fit:cover;border-radius:9px}.submissionCard>div>span,.submissionCard>div>b{display:block}.submissionCard>div>span{margin:4px 0;color:#64748b;font-size:13px}.submissionCard details{margin:5px 0}.submissionCard summary{color:#176b4d;font-weight:900;cursor:pointer}.submissionCard details p{font-size:12px;line-height:1.4}.submissionCard>div>button{padding:6px 9px;border-radius:8px;color:#b42318;background:#fff1f0;font-weight:850;cursor:pointer}
+.studentPortal{min-height:100vh;padding:20px;background:linear-gradient(180deg,#effaf5,#fff)}.studentLoginCard,.studentUploadCard{width:min(520px,100%);margin:8vh auto 0;padding:28px;border-radius:24px;background:#fff;box-shadow:0 20px 50px rgba(15,23,42,.1)}.studentLoginCard .brandMark{margin-bottom:12px}.studentLoginCard>span{color:var(--brand);font-weight:900}.studentLoginCard h1{margin:7px 0;font-size:30px}.studentLoginCard p{color:#64748b}.studentLoginCard form{display:grid;gap:10px;margin-top:20px}.studentLoginCard input{min-height:54px;padding:0 15px;border:1px solid #cbd8d1;border-radius:13px;font-size:21px;letter-spacing:.12em;text-align:center}.studentLoginCard form>button,.studentUploadCard>button,.studentUploadCard label{min-height:52px;display:flex;align-items:center;justify-content:center;border-radius:13px;color:#fff;background:var(--brand);font-size:18px;font-weight:950;cursor:pointer}.studentPortalTop{width:min(900px,100%);margin:0 auto}.studentPortalTop span,.studentPortalTop strong{display:block}.studentPortalTop span{color:var(--brand);font-weight:900}.studentPortalTop strong{font-size:23px}.studentPortalTop button{padding:9px 12px;border-radius:10px;background:#fff;font-weight:850}.studentUploadCard{margin:24px auto 0}.studentUploadCard h1{margin:0}.studentUploadCard p{color:#64748b}.studentUploadCard label{margin-top:18px;background:#2563a8}.studentUploadCard>button{width:100%;margin-top:9px}.studentUploadCard>button:disabled{opacity:.45}.studentItemList{width:min(900px,100%);display:grid;gap:12px;margin:18px auto}.studentItemList>article{display:grid;grid-template-columns:180px 1fr;gap:14px;padding:14px;border-radius:17px;background:#fff}.studentItemList>article>img{width:180px;height:180px;object-fit:cover;border-radius:12px}.studentError{color:#b42318}.studentPrivacyNote{text-align:center;color:#64748b;font-size:13px;font-weight:750}
+.studentModeToggle{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:16px;padding:5px;border-radius:13px;background:#eef3f0}.studentModeToggle button{min-height:40px;border-radius:9px;color:#64748b;background:transparent;font-size:16px;font-weight:950;cursor:pointer}.studentModeToggle button.active{color:#fff;background:var(--brand);box-shadow:0 5px 12px rgba(23,107,77,.2)}.studentSuccess{color:#15803d;font-size:18px;font-weight:950}.studentRetry,.studentLocalDelete{min-height:38px;margin:7px 7px 0 0;padding:0 14px;border-radius:10px;font-weight:900;cursor:pointer}.studentRetry{color:#fff;background:#2563a8}.studentLocalDelete{color:#b42318;background:#fff1f0}.studentLocalDelete:disabled,.studentRetry:disabled{opacity:.4}
+.submissionDayList{display:grid;gap:7px;margin-top:11px}.submissionDayList>button{width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 14px;border:1px solid #dce7e1;border-radius:12px;text-align:left;background:#f8fbf9;cursor:pointer}.submissionDayList strong,.submissionDayList span{display:block}.submissionDayList strong{font-size:17px}.submissionDayList span{margin-top:3px;color:#64748b;font-size:13px;font-weight:750}.submissionDayList em{color:#176b4d;font-style:normal;font-weight:950;white-space:nowrap}
+.teacherDayBackdrop{z-index:280}.teacherSubmissionDay{width:min(820px,100%);max-height:calc(100vh - 30px);overflow:auto;padding:22px;border-radius:24px;background:#f4f7f5;box-shadow:0 28px 70px rgba(15,23,42,.3)}.teacherSubmissionDay>header{position:sticky;top:-22px;z-index:2;display:flex;align-items:flex-start;justify-content:space-between;margin:-22px -22px 18px;padding:20px 22px 15px;background:rgba(255,255,255,.96);border-bottom:1px solid #dde6e1}.teacherSubmissionDay header span,.teacherSubmissionDay header strong,.teacherSubmissionDay header small{display:block}.teacherSubmissionDay header span{color:var(--brand);font-weight:900}.teacherSubmissionDay header strong{margin-top:3px;font-size:25px}.teacherSubmissionDay header small{margin-top:3px;color:#64748b;font-weight:750}.teacherSubmissionDay header>button{width:38px;height:38px;border-radius:50%;background:#eef2f0;font-size:26px}.teacherSubmissionStream{display:grid;gap:16px}.teacherSubmissionStream>article{padding:16px;border-radius:18px;background:#fff;box-shadow:0 7px 18px rgba(15,23,42,.06)}.teacherSubmissionPhoto{display:grid;grid-template-columns:1fr auto;align-items:center;gap:5px}.teacherSubmissionPhoto>span{color:#64748b;font-size:13px;font-weight:750}.teacherSubmissionPhoto>button{grid-column:1/-1;margin-top:7px;background:transparent;cursor:zoom-in}.teacherSubmissionPhoto img{width:100%;max-height:580px;object-fit:contain;border-radius:12px;background:#f1f5f3}.teacherSubmissionDelete{min-height:38px;padding:0 13px;border-radius:9px;color:#b42318;background:#fff1f0;font-weight:900;cursor:pointer}
+.teacherDayHeaderActions{display:flex;align-items:center;gap:7px}.teacherDayHeaderActions>button{min-height:38px;padding:0 12px;border-radius:10px;color:#176b4d;background:#e8f7ef;font-weight:950;cursor:pointer}.teacherDayHeaderActions>button.active{color:#fff;background:var(--brand)}.teacherDayHeaderActions .teacherDayClose{width:38px;padding:0;border-radius:50%;color:#475569;background:#eef2f0;font-size:26px}
 
 .footerNote { justify-content: flex-end; }
 
@@ -1858,19 +1942,22 @@ a { color: inherit; }
   grid-template-columns: 1fr 1fr;
   gap: 10px;
 }
-.footerSupportButtons a {
+.footerSupportButtons a,
+.footerSupportButtons button {
   min-height: 50px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border: 0;
   border-radius: 14px;
   font-size: 18px;
   font-weight: 950;
   text-decoration: none;
+  cursor: pointer;
 }
-.footerSupportButtons .trialButton {
-  color: #241d00;
-  background: #fee500;
+.footerSupportButtons .footerAuthButton {
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), #20845f);
 }
 .footerSupportButtons .supportButton {
   color: #176b4d;
@@ -1902,6 +1989,14 @@ a { color: inherit; }
 }
 
 @media (max-width: 480px) {
+  .studentNameEntry { grid-template-columns: 1fr; padding: 13px; }
+  .studentNameEntry small { grid-column: 1; }
+  .studentNameActions { grid-column: 1; grid-row: auto; display: grid; grid-template-columns: 1fr 1fr; }
+  .studentRecordsDialog { padding: 18px; border-radius: 20px; }
+  .studentNameActions { grid-template-columns:1fr; }
+  .submissionGrid{grid-template-columns:1fr}.accessStudentHead{align-items:flex-start;flex-wrap:wrap}.studentAccessDialog{padding:16px}.studentCreateRow{display:grid}.studentItemList>article{grid-template-columns:1fr}.studentItemList>article>img{width:100%;height:240px}
+  .teacherSubmissionDay{padding:14px;border-radius:18px}.teacherSubmissionDay>header{top:-14px;margin:-14px -14px 13px;padding:14px}.teacherSubmissionStream>article{padding:11px}.teacherSubmissionPhoto img{max-height:460px}
+  .weeklyComparisonTable > div { grid-template-columns: 1.15fr .8fr .8fr .8fr; padding: 0 7px; }
   .compactActions { gap: 4px; }
   .compactActions .primary,
   .compactActions .ghost,
@@ -1914,7 +2009,8 @@ a { color: inherit; }
   .compactActions .actionArrow,
   .stopSquare { display: none; }
   .footerSupportButtons { gap: 7px; }
-  .footerSupportButtons a { min-height: 46px; font-size: 16px; }
+  .footerSupportButtons a,
+  .footerSupportButtons button { min-height: 46px; font-size: 16px; }
   .errorTypeBadge { min-height: 29px; padding: 0 8px; font-size: 15px; }
   .studentSummaryDialog { padding: 20px; border-radius: 21px; }
   .studentSummaryDialog header strong { font-size: 27px; }

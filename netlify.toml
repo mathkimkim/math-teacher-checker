@@ -6,6 +6,9 @@
 [functions]
   node_bundler = "esbuild"
 
+[functions."cleanup-student-data"]
+  schedule = "@daily"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

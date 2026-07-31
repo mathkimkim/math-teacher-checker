@@ -7,7 +7,7 @@ import './styles.css';
 const MAX_FILES = 50;
 const MAX_IMAGE_SIDE = 1800;
 const JPEG_QUALITY = 0.84;
-const KAKAO_LINK = 'https://open.kakao.com/o/sIycgvDi';
+const KAKAO_LINK = 'https://open.kakao.com/o/sVJynZFi';
 
 let mathJaxPromise = null;
 
@@ -702,8 +702,63 @@ function VerdictDialog({ current, currentErrorType = '', onSave, onClose }) {
   );
 }
 
-function StudentSummaryDialog({ studentName, summary, onClose }) {
+function normalizeStudentName(value) {
+  return String(value || '').replace(/\s+/g, '').slice(0, 30);
+}
+
+function kstWeekKey(value = new Date()) {
+  const shifted = new Date(new Date(value).getTime() + (9 * 60 * 60 * 1000));
+  const midnight = Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate());
+  const day = new Date(midnight).getUTCDay();
+  return new Date(midnight - (((day + 6) % 7) * 86400000)).toISOString().slice(0, 10);
+}
+
+function aggregateWeek(records, weekKey) {
+  const result = { total: 0, correct: 0, incorrect: 0, review: 0, calculation: 0, concept: 0 };
+  (records || []).filter((row) => kstWeekKey(row.analyzed_at) === weekKey).forEach((row) => {
+    result.total += Number(row.total_count || 0);
+    result.correct += Number(row.correct_count || 0);
+    result.incorrect += Number(row.incorrect_count || 0);
+    result.review += Number(row.review_count || 0);
+    result.calculation += Number(row.calculation_errors || 0);
+    result.concept += Number(row.concept_errors || 0);
+  });
+  result.correctRate = result.total ? Number(((result.correct / result.total) * 100).toFixed(1)) : 0;
+  return result;
+}
+
+function StudentSummaryDialog({ studentName, summary, weeklyRecords, weeklyLoading, onClose }) {
   const isMobileDevice = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const thisWeekKey = kstWeekKey();
+  const previousWeekKey = new Date(`${thisWeekKey}T00:00:00Z`);
+  previousWeekKey.setUTCDate(previousWeekKey.getUTCDate() - 7);
+  const thisWeek = aggregateWeek(weeklyRecords, thisWeekKey);
+  const lastWeek = aggregateWeek(weeklyRecords, previousWeekKey.toISOString().slice(0, 10));
+
+  function delta(field, rate = false) {
+    const value = Number(thisWeek[field] || 0) - Number(lastWeek[field] || 0);
+    return `${value > 0 ? '+' : ''}${value.toFixed(rate ? 1 : 0)}${rate ? '%p' : ''}`;
+  }
+
+  function deltaClass(field, higherIsBetter = false) {
+    const value = Number(thisWeek[field] || 0) - Number(lastWeek[field] || 0);
+    if (!value) return 'same';
+    const improved = higherIsBetter ? value > 0 : value < 0;
+    return improved ? 'improved' : 'declined';
+  }
+
+  const reportLines = [];
+  if (lastWeek.total) {
+    const rateDiff = thisWeek.correctRate - lastWeek.correctRate;
+    reportLines.push(`이번 주에는 총 ${thisWeek.total}문제를 분석했으며 정답률은 ${thisWeek.correctRate}%입니다.`);
+    reportLines.push(`지난주보다 정답률이 ${Math.abs(rateDiff).toFixed(1)}%p ${rateDiff > 0 ? '상승했습니다' : rateDiff < 0 ? '하락했습니다' : '유지되었습니다'}.`);
+    const errorDiff = (thisWeek.calculation + thisWeek.concept) - (lastWeek.calculation + lastWeek.concept);
+    reportLines.push(errorDiff < 0 ? '풀이 과정에서 나타난 오류도 지난주보다 줄어들었습니다.' : errorDiff > 0 ? '반복되는 오류 유형을 중심으로 다시 점검하겠습니다.' : '전체 오류 횟수는 지난주와 같습니다.');
+  } else {
+    reportLines.push(`이번 주에는 총 ${thisWeek.total}문제를 분석했습니다.`);
+    reportLines.push('다음 주부터 지난주와 비교한 변화도 함께 안내드리겠습니다.');
+  }
+  reportLines.push('단순히 정답만 확인하지 않고 풀이 과정까지 꼼꼼하게 확인하겠습니다.');
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -714,19 +769,17 @@ function StudentSummaryDialog({ studentName, summary, onClose }) {
   }, [onClose]);
 
   const shareText = [
-    '[오늘의 학습 분석]',
+    '[주간 풀이 분석]',
     '',
     `학생: ${studentName || '(학생 이름을 입력해 주세요)'}`,
-    `총 분석 문제: ${summary.total}문제`,
-    `맞은 문제: ${summary.correct}문제`,
-    `틀린 문제: ${summary.incorrect}문제`,
-    `확인필요: ${summary.review}문제`,
-    `정답률: ${summary.correctRate}%`,
-    `오답률: ${summary.incorrectRate}%`,
+    `이번 주 분석: ${thisWeek.total}문제`,
+    `정답률: 지난주 ${lastWeek.correctRate}% → 이번 주 ${thisWeek.correctRate}%`,
     '',
-    '오류유형',
-    `계산오류: ${summary.calculation}개`,
-    `개념오류: ${summary.concept}개`
+    '오류 유형(지난주 → 이번 주)',
+    `계산오류: ${lastWeek.calculation}개 → ${thisWeek.calculation}개`,
+    `개념오류: ${lastWeek.concept}개 → ${thisWeek.concept}개`,
+    '',
+    ...reportLines
   ].join('\n');
 
   async function copyShareText(message) {
@@ -754,7 +807,7 @@ function StudentSummaryDialog({ studentName, summary, onClose }) {
 
     try {
       if (navigator.share) {
-        await navigator.share({ title: '오늘의 학습 분석', text: shareText });
+        await navigator.share({ title: '주간 풀이 분석', text: shareText });
         return;
       }
       await copyShareText('분석 결과가 복사되었습니다. 카카오톡 대화창에 붙여넣어 주세요.');
@@ -772,27 +825,104 @@ function StudentSummaryDialog({ studentName, summary, onClose }) {
           <div><span>오늘의 학습 분석</span><strong>{studentName || '학생 이름 미입력'}</strong></div>
           <button type="button" onClick={onClose} aria-label="닫기">×</button>
         </header>
-        <div className="studentSummaryGrid">
-          <div><span>총 분석</span><b>{summary.total}문제</b></div>
-          <div><span>맞음</span><b>{summary.correct}문제</b></div>
-          <div className="wrong"><span>틀림</span><b>{summary.incorrect}문제</b></div>
-          <div className="review"><span>확인필요</span><b>{summary.review}문제</b></div>
-        </div>
-        <div className="studentRateGrid">
-          <div><span>정답률</span><strong>{summary.correctRate}%</strong></div>
-          <div><span>오답률</span><strong>{summary.incorrectRate}%</strong></div>
-        </div>
-        <div className="studentErrorTypes">
-          <strong>오류유형</strong>
-          <div><span>계산오류</span><b>{summary.calculation}개</b></div>
-          <div><span>개념오류</span><b>{summary.concept}개</b></div>
-        </div>
+        {weeklyLoading ? <p className="weeklyLoading">주간 데이터를 불러오는 중...</p> : (
+          <>
+            <div className="weeklyComparisonTitle"><strong>지난주·이번 주 비교</strong><span>월요일~일요일</span></div>
+            <div className="weeklyComparisonTable">
+              <div className="weeklyHead"><span>항목</span><b>지난주</b><b>이번 주</b><b>변화</b></div>
+              <div><span>분석 문제</span><b>{lastWeek.total}</b><b>{thisWeek.total}</b><em className="neutral">{delta('total')}</em></div>
+              <div><span>정답률</span><b>{lastWeek.correctRate}%</b><b>{thisWeek.correctRate}%</b><em className={deltaClass('correctRate', true)}>{delta('correctRate', true)}</em></div>
+              <div><span>계산오류</span><b>{lastWeek.calculation}</b><b>{thisWeek.calculation}</b><em className={deltaClass('calculation')}>{delta('calculation')}</em></div>
+              <div><span>개념오류</span><b>{lastWeek.concept}</b><b>{thisWeek.concept}</b><em className={deltaClass('concept')}>{delta('concept')}</em></div>
+            </div>
+            <div className="weeklyParentReport"><strong>학부모님께 드리는 주간 리포트</strong>{reportLines.map((line) => <p key={line}>{line}</p>)}</div>
+          </>
+        )}
         <button type="button" className="studentShareButton" onClick={share}>
           {isMobileDevice ? '카카오톡 공유하기' : '분석 결과 복사'}
         </button>
       </section>
     </div>
   );
+}
+
+function StudentRecordsDialog({ records, loading, onSelect, onDelete, onClose }) {
+  const grouped = Object.values((records || []).reduce((map, row) => {
+    const name = row.student_name;
+    if (!map[name]) map[name] = { name, rows: [], latest: row.analyzed_at };
+    map[name].rows.push(row);
+    if (new Date(row.analyzed_at) > new Date(map[name].latest)) map[name].latest = row.analyzed_at;
+    return map;
+  }, {})).sort((a, b) => new Date(b.latest) - new Date(a.latest));
+  const thisWeekKey = kstWeekKey();
+  const previous = new Date(`${thisWeekKey}T00:00:00Z`);
+  previous.setUTCDate(previous.getUTCDate() - 7);
+
+  return (
+    <div className="studentSummaryBackdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="studentRecordsDialog" role="dialog" aria-modal="true" aria-label="전체 학생 기록 관리">
+        <header><div><span>최근 3주</span><strong>전체 학생 기록</strong></div><button type="button" onClick={onClose} aria-label="닫기">×</button></header>
+        {loading ? <p className="weeklyLoading">학생 기록을 불러오는 중...</p> : grouped.length ? (
+          <div className="studentRecordList">{grouped.map((student) => {
+            const current = aggregateWeek(student.rows, thisWeekKey);
+            const last = aggregateWeek(student.rows, previous.toISOString().slice(0, 10));
+            return <article key={student.name}>
+              <button className="studentRecordMain" type="button" onClick={() => onSelect(student.name)}>
+                <strong>{student.name}</strong>
+                <span>이번 주 {current.total}문제 · 정답률 {current.correctRate}%</span>
+                <small>지난주 {last.correctRate}% → 이번 주 {current.correctRate}%</small>
+              </button>
+              <button className="studentRecordDelete" type="button" onClick={() => onDelete(student.name)}>기록 삭제</button>
+            </article>;
+          })}</div>
+        ) : <div className="studentRecordsEmpty">최근 3주 동안 저장된 학생 기록이 없습니다.</div>}
+        <p className="studentRetentionNote">3주가 지난 데이터는 매일 자동 삭제됩니다.</p>
+      </section>
+    </div>
+  );
+}
+
+function submissionDateKey(value) {
+  return new Intl.DateTimeFormat('ko-KR', { timeZone:'Asia/Seoul', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date(value));
+}
+
+function TeacherSubmissionDay({ studentName, date, rows, onDelete, onUpdate, onClose }) {
+  const [dayRows,setDayRows]=useState(()=>[...rows].sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)));
+  const [hideCorrect,setHideCorrect]=useState(false), [lightbox,setLightbox]=useState(null), [editTarget,setEditTarget]=useState(null);
+  function openEdit(rowId,problemIndex,current,currentErrorType){setEditTarget({rowId,problemIndex,current,currentErrorType});}
+  async function saveEdit(verdict,errorType){const row=dayRows.find(x=>x.id===editTarget.rowId);const problems=(row?.analysis_result?.problems||[]).map((p,i)=>i===editTarget.problemIndex?{...p,originalVerdict:p.originalVerdict||p.verdict||'확인 필요',verdict,errorType:verdict==='틀림'?errorType:'',manuallyChanged:true}:p);await onUpdate(row.id,problems);setDayRows(previous=>previous.map(x=>x.id===row.id?{...x,analysis_result:{...x.analysis_result,problems}}:x));setEditTarget(null);}
+  return <div className="studentSummaryBackdrop teacherDayBackdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="teacherSubmissionDay"><header><div><span>{studentName}</span><strong>{date} 풀이 분석</strong><small>사진 {dayRows.length}장</small></div><div className="teacherDayHeaderActions"><button className={hideCorrect?'active':''} onClick={()=>setHideCorrect(x=>!x)}>{hideCorrect?'맞음 포함하기':'맞음 제외하기'}</button><button className="teacherDayClose" onClick={onClose}>×</button></div></header><div className="teacherSubmissionStream">{dayRows.map((row,index)=><article key={row.id}><div className="teacherSubmissionPhoto"><strong>학생 풀이 {index+1}</strong><span>{new Date(row.created_at).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'})}</span><button onClick={()=>setLightbox({src:row.image_url,alt:`${studentName} 풀이 ${index+1}`})}><img src={row.image_url} alt={`${studentName} 풀이 ${index+1}`}/></button></div><ResultCard item={{result:row.analysis_result}} hideCorrect={hideCorrect} onCopy={()=>navigator.clipboard.writeText(JSON.stringify(row.analysis_result?.problems||[]))} onChangeVerdict={(problemIndex,current,currentErrorType)=>openEdit(row.id,problemIndex,current,currentErrorType)}/><button className="teacherSubmissionDelete" onClick={()=>onDelete(row.id)}>제출 삭제</button></article>)}</div></section>{editTarget?<VerdictDialog current={editTarget.current} currentErrorType={editTarget.currentErrorType} onSave={saveEdit} onClose={()=>setEditTarget(null)}/>:null}{lightbox?<ImageLightbox src={lightbox.src} alt={lightbox.alt} onClose={()=>setLightbox(null)}/>:null}</div>;
+}
+
+function StudentAccessManager({ token, onClose }) {
+  const [students,setStudents]=useState([]), [submissions,setSubmissions]=useState([]), [name,setName]=useState(''), [loading,setLoading]=useState(true);
+  const [issuedCode,setIssuedCode]=useState(null);
+  const [selectedDay,setSelectedDay]=useState(null);
+  async function load(){ setLoading(true); try{ const d=await apiRequest('students-api',{token}); setStudents(d.students||[]); setSubmissions(d.submissions||[]); }catch(e){alert(e.message);}finally{setLoading(false);} }
+  useEffect(()=>{load();},[]);
+  async function create(){ if(!name.trim())return; const d=await apiRequest('students-api',{method:'POST',token,body:{action:'create',studentName:name}}); setIssuedCode({name:name.trim(),code:d.accessCode}); setName(''); await load(); }
+  async function act(body){ const d=await apiRequest('students-api',{method:'POST',token,body}); if(d.accessCode){ const s=students.find(x=>x.id===body.studentId); setIssuedCode({name:s?.student_name||'학생',code:d.accessCode}); } await load(); }
+  async function removeSubmission(id){ if(!confirm('이 제출 사진과 상세분석을 삭제할까요?'))return; await fetch(`/.netlify/functions/students-api?submissionId=${encodeURIComponent(id)}`,{method:'DELETE',headers:apiHeaders(token)}); setSelectedDay(null); await load(); }
+  async function updateSubmission(id,problems){await apiRequest('students-api',{method:'POST',token,body:{action:'update_submission',submissionId:id,problems}});setSubmissions(previous=>previous.map(x=>x.id===id?{...x,analysis_result:{...x.analysis_result,problems}}:x));}
+  return <div className="studentSummaryBackdrop" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="studentAccessDialog"><header><div><span>학생용 촬영·분석</span><strong>학생 접속 관리</strong></div><button onClick={onClose}>×</button></header>
+    <div className="studentCreateRow"><input value={name} onChange={e=>setName(e.target.value.slice(0,30))} placeholder="학생 이름"/><button onClick={create}>학생 등록·코드 발급</button></div>
+    {issuedCode?<div className="issuedCode"><div><span>{issuedCode.name} 접속코드</span><strong>{issuedCode.code}</strong></div><button onClick={()=>navigator.clipboard.writeText(`풀이체커 학생용\n${location.origin}/student\n접속코드: ${issuedCode.code}`)}>링크·코드 복사</button><small>보안을 위해 코드는 지금만 표시됩니다.</small></div>:null}
+    {loading?<p className="weeklyLoading">불러오는 중...</p>:<div className="accessStudentList">{students.map(s=>{const rows=submissions.filter(x=>x.student_id===s.id);const days=Object.entries(rows.reduce((map,row)=>{const key=submissionDateKey(row.created_at);(map[key]||=[]).push(row);return map;},{})).sort((a,b)=>new Date(b[1][0].created_at)-new Date(a[1][0].created_at));return <article key={s.id}><div className="accessStudentHead"><div><strong>{s.student_name}</strong><span>{s.active?'사용 중':'사용 중지'} · 3일 내 제출 {rows.length}건</span></div><button onClick={()=>act({action:'regenerate',studentId:s.id})}>코드 재발급</button><button onClick={()=>act({action:'toggle',studentId:s.id,active:!s.active})}>{s.active?'사용 중지':'사용 재개'}</button></div><div className="submissionDayList">{days.map(([date,dayRows])=><button key={date} onClick={()=>setSelectedDay({studentName:s.student_name,date,rows:dayRows})}><div><strong>{date}</strong><span>사진 {dayRows.length}장 · 총 {dayRows.reduce((n,r)=>n+(r.analysis_result?.problems?.length||0),0)}문제</span></div><em>상세분석 ›</em></button>)}</div></article>})}</div>}
+    {selectedDay?<TeacherSubmissionDay {...selectedDay} onDelete={removeSubmission} onUpdate={updateSubmission} onClose={()=>setSelectedDay(null)}/>:null}
+  </section></div>;
+}
+
+function StudentApp() {
+  const [token,setToken]=useState(localStorage.getItem('math_checker_student_token')||''), [student,setStudent]=useState(null), [code,setCode]=useState(''), [error,setError]=useState(''), [busy,setBusy]=useState(false), [items,setItems]=useState([]), [analysisMode,setAnalysisMode]=useState('LIGHT');
+  useEffect(()=>{if(token)apiRequest('student-access',{token}).then(d=>setStudent(d.student)).catch(()=>{localStorage.removeItem('math_checker_student_token');setToken('');});},[token]);
+  async function login(e){e.preventDefault();setError('');try{const d=await apiRequest('student-access',{method:'POST',body:{code}});localStorage.setItem('math_checker_student_token',d.token);setToken(d.token);setStudent(d.student);}catch(x){setError(x.message);}}
+  function add(files){setItems(Array.from(files||[]).filter(f=>f.type.startsWith('image/')).slice(0,10).map((file,i)=>({id:`${Date.now()}-${i}`,file,name:file.name,preview:URL.createObjectURL(file),status:'ready',result:null,error:null})));}
+  function removeLocal(id){setItems(p=>{const target=p.find(x=>x.id===id);if(target?.preview)URL.revokeObjectURL(target.preview);return p.filter(x=>x.id!==id);});}
+  async function analyzeOneStudent(item){try{setItems(p=>p.map(x=>x.id===item.id?{...x,status:'analyzing',error:null}:x));const imageDataUrl=await compressImageToDataUrl(item.file);const res=await fetch('/.netlify/functions/analyze',{method:'POST',headers:apiHeaders(token),body:JSON.stringify({imageDataUrl,fileName:item.name,analysisMode})});const data=await res.json();if(!res.ok)throw normalizeErrorPayload(data,res.status);await apiRequest('student-access',{method:'POST',token,body:{recordId:item.id,fileName:item.name,imageDataUrl,problems:data.problems||[]}});setItems(p=>p.map(x=>x.id===item.id?{...x,status:'done',result:null,error:null}:x));}catch(e){setItems(p=>p.map(x=>x.id===item.id?{...x,status:'error',result:null,error:e}:x));}}
+  async function analyze(){if(!items.length||busy)return;setBusy(true);for(const item of items.filter(x=>x.status==='ready'||x.status==='error'))await analyzeOneStudent(item);setBusy(false);}
+  async function retry(item){if(busy)return;setBusy(true);await analyzeOneStudent(item);setBusy(false);}
+  if(!token||!student)return <main className="studentPortal"><section className="studentLoginCard"><div className="brandMark">✓</div><span>풀이체커 학생용</span><h1>내 풀이 촬영하기</h1><p>선생님에게 받은 6자리 접속코드를 입력하세요.</p><form onSubmit={login}><input inputMode="numeric" maxLength="6" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} placeholder="6자리 접속코드"/>{error?<div className="authAlert error">{error}</div>:null}<button>시작하기</button></form></section></main>;
+  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='PRO'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('PRO')}>PRO</button><button className={analysisMode==='LIGHT'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('LIGHT')}>LIGHT</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>AI가 풀이를 확인하고 있어요...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.status==='error'?<><p className="studentError">분석 실패</p><button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p></main>;
 }
 
 function ImageLightbox({ src, alt, onClose }) {
@@ -919,7 +1049,7 @@ function ImageLightbox({ src, alt, onClose }) {
   );
 }
 
-function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect }) {
+function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect, readOnly = false }) {
   const allProblems = Array.isArray(item.result?.problems) ? item.result.problems : [];
   const problems = hideCorrect
     ? allProblems
@@ -928,7 +1058,7 @@ function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect }) {
     : allProblems.map((problem, originalIndex) => ({ problem, originalIndex }));
 
   if (!problems.length) {
-    return <div className="errorBox small">분석 결과를 표시하지 못했습니다.</div>;
+    return <div className="errorBox small">{hideCorrect ? '틀림·확인 필요 문제가 없습니다.' : '분석 결과를 표시하지 못했습니다.'}</div>;
   }
 
   return (
@@ -952,9 +1082,9 @@ function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect }) {
               <div className="verdictControls">
                 <div className={`verdict ${getVerdictClass(verdict)}`}>{verdict}</div>
                 {errorType ? <span className="errorTypeBadge">{errorType}</span> : null}
-                <button type="button" className="verdictEditButton" onClick={() => onChangeVerdict(originalIndex, verdict, errorType)} aria-label={`${number}번 판정과 오류유형 변경`} title="판정·오류유형 변경">
+                {!readOnly ? <button type="button" className="verdictEditButton" onClick={() => onChangeVerdict(originalIndex, verdict, errorType)} aria-label={`${number}번 판정과 오류유형 변경`} title="판정·오류유형 변경">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16.5-.8 4.3 4.3-.8L19 8.5 15.5 5 4 16.5Z"/><path d="m13.8 6.7 3.5 3.5"/></svg>
-                </button>
+                </button> : null}
               </div>
             </div>
             {showEvidence && (
@@ -974,10 +1104,10 @@ function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect }) {
         );
       })}
 
-      <button className="copy" onClick={onCopy}>
+      {!readOnly ? <button className="copy" onClick={onCopy}>
         <span>결과 복사</span>
         <span aria-hidden="true">⧉</span>
-      </button>
+      </button> : null}
     </div>
   );
 }
@@ -1103,6 +1233,15 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   const [analysisMode, setAnalysisMode] = useState('PRO');
   const [studentName, setStudentName] = useState('');
   const [showStudentSummary, setShowStudentSummary] = useState(false);
+  const [summaryStudentName, setSummaryStudentName] = useState('');
+  const [weeklyRecords, setWeeklyRecords] = useState([]);
+  const [weeklyLoading, setWeeklyLoading] = useState(false);
+  const [showStudentRecords, setShowStudentRecords] = useState(false);
+  const [showStudentAccess, setShowStudentAccess] = useState(false);
+  const [allStudentRecords, setAllStudentRecords] = useState([]);
+  const [allRecordsLoading, setAllRecordsLoading] = useState(false);
+  const [saveState, setSaveState] = useState('idle');
+  const [recordId, setRecordId] = useState(() => globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
   const inputRef = useRef(null);
   const requestControllersRef = useRef(new Map());
   const analysisStoppedRef = useRef(false);
@@ -1110,8 +1249,8 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   const remaining = account ? Math.max(0, Number(account.limit_count || 0) - Number(account.used_count || 0)) : 0;
 
   const canAnalyze = useMemo(
-    () => items.length > 0 && !busy && (!auth || remaining >= items.length),
-    [items, busy, auth, remaining]
+    () => items.length > 0 && normalizeStudentName(studentName) && !busy && (!auth || remaining >= items.length),
+    [items, studentName, busy, auth, remaining]
   );
 
   function addFiles(fileList) {
@@ -1181,6 +1320,13 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     setAnalysisElapsedSeconds(0);
     setStudentName('');
     setShowStudentSummary(false);
+    setSummaryStudentName('');
+    setWeeklyRecords([]);
+    setShowStudentRecords(false);
+    setShowStudentAccess(false);
+    setAllStudentRecords([]);
+    setSaveState('idle');
+    setRecordId(globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`);
   }
 
   function openVerdictDialog(itemId, problemIndex, current, currentErrorType) {
@@ -1359,6 +1505,10 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   }
 
   function analyzeAll() {
+    if (!normalizeStudentName(studentName)) {
+      alert('분석 전에 학생 이름을 입력해 주세요.');
+      return;
+    }
     if (!auth) {
       setLoginMode('analyze');
       return;
@@ -1418,6 +1568,95 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     incorrectRate: analyzedProblems ? ((incorrectProblems / analyzedProblems) * 100).toFixed(1) : '0.0'
   };
 
+  async function saveStudentData(summary = studentSummary) {
+    const name = normalizeStudentName(studentName);
+    if (!auth?.token || !name || !summary.total) return false;
+    setSaveState('saving');
+    try {
+      const response = await fetch('/.netlify/functions/student-weekly-data', {
+        method: 'POST',
+        headers: apiHeaders(auth.token),
+        body: JSON.stringify({ recordId, studentName: name, ...summary })
+      });
+      if (!response.ok) throw new Error('저장 실패');
+      setSaveState('saved');
+      return true;
+    } catch {
+      setSaveState('error');
+      return false;
+    }
+  }
+
+  async function loadWeeklyData() {
+    const name = normalizeStudentName(studentName);
+    if (!auth?.token || !name) return;
+    setWeeklyLoading(true);
+    try {
+      const response = await fetch(`/.netlify/functions/student-weekly-data?studentName=${encodeURIComponent(name)}`, { headers: apiHeaders(auth.token) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || '주간 데이터 조회 실패');
+      setWeeklyRecords(data.records || []);
+    } catch {
+      setWeeklyRecords([]);
+    } finally {
+      setWeeklyLoading(false);
+    }
+  }
+
+  async function openStudentSummary() {
+    await saveStudentData();
+    setSummaryStudentName(normalizeStudentName(studentName));
+    setShowStudentSummary(true);
+    await loadWeeklyData();
+  }
+
+  async function loadAllStudentRecords() {
+    if (!auth?.token) return;
+    setAllRecordsLoading(true);
+    try {
+      const response = await fetch('/.netlify/functions/student-weekly-data?scope=all', { headers: apiHeaders(auth.token) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || '전체 학생 기록 조회 실패');
+      setAllStudentRecords(data.records || []);
+    } catch {
+      setAllStudentRecords([]);
+    } finally {
+      setAllRecordsLoading(false);
+    }
+  }
+
+  async function openStudentRecords() {
+    if (!auth) { setLoginMode('login'); return; }
+    setShowStudentRecords(true);
+    await loadAllStudentRecords();
+  }
+
+  async function selectStudentRecord(name) {
+    setShowStudentRecords(false);
+    setSummaryStudentName(name);
+    setShowStudentSummary(true);
+    setWeeklyLoading(true);
+    try {
+      const response = await fetch(`/.netlify/functions/student-weekly-data?studentName=${encodeURIComponent(name)}`, { headers: apiHeaders(auth.token) });
+      const data = await response.json().catch(() => ({}));
+      setWeeklyRecords(response.ok ? (data.records || []) : []);
+    } finally { setWeeklyLoading(false); }
+  }
+
+  async function deleteStudentRecord(name) {
+    if (!window.confirm(`${name} 학생의 최근 3주 기록을 모두 삭제할까요?`)) return;
+    const response = await fetch(`/.netlify/functions/student-weekly-data?studentName=${encodeURIComponent(name)}`, { method: 'DELETE', headers: apiHeaders(auth.token) });
+    if (!response.ok) { alert('학생 기록을 삭제하지 못했습니다.'); return; }
+    setAllStudentRecords((previous) => previous.filter((row) => row.student_name !== name));
+    if (normalizeStudentName(summaryStudentName) === normalizeStudentName(name)) setWeeklyRecords([]);
+  }
+
+  useEffect(() => {
+    if (!auth?.token || !normalizeStudentName(studentName) || !studentSummary.total) return undefined;
+    const timer = window.setTimeout(() => { saveStudentData(); }, 500);
+    return () => window.clearTimeout(timer);
+  }, [auth?.token, recordId, studentName, studentSummary.total, studentSummary.correct, studentSummary.incorrect, studentSummary.review, studentSummary.calculation, studentSummary.concept]);
+
   return (
     <main className="appShell">
       <header className="topbar">
@@ -1438,11 +1677,9 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
             <>
               <span className="userEmail">{account?.login_id}</span>
               <TopbarQuota account={account} />
-              <button type="button" className="logoutButton" onClick={onLogout}>로그아웃</button>
             </>
-          ) : (
-            <button type="button" className="topbarLoginButton" onClick={() => setLoginMode('login')}>로그인</button>
-          )}
+          ) : null}
+          <a className="topbarTrialButton" href={KAKAO_LINK} target="_blank" rel="noreferrer noopener">무료체험 신청</a>
         </div>
       </header>
 
@@ -1496,22 +1733,21 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
           </article>
         </section>
 
+        <section className="studentNameEntry" aria-label="학생 이름 입력">
+          <label>
+            <span>학생 이름</span>
+            <input value={studentName} onChange={(event) => setStudentName(event.target.value.slice(0, 30))} placeholder="이름을 입력하면 분석 결과가 자동 저장됩니다" />
+          </label>
+          <small>{saveState === 'saving' ? '저장 중...' : saveState === 'saved' ? '자동 저장됨' : saveState === 'error' ? '저장 실패 · 잠시 후 다시 시도됩니다' : '분석 전에 학생 이름을 입력해 주세요.'}</small>
+          <div className="studentNameActions">
+            {analyzedProblems > 0 && normalizeStudentName(studentName) ? <button type="button" onClick={openStudentSummary}>상세분석 ›</button> : null}
+            <button type="button" className="allStudentRecordsButton" onClick={openStudentRecords}>전체 학생 기록</button>
+            <button type="button" className="allStudentRecordsButton" onClick={() => auth ? setShowStudentAccess(true) : setLoginMode('login')}>학생 접속 관리</button>
+          </div>
+        </section>
+
         {analyzedProblems > 0 ? (
           <section className="analysisCounter resultOverview" aria-live="polite">
-            <div className="studentResultIdentity">
-              <label>
-                <span>이름</span>
-                <input
-                  value={studentName}
-                  onChange={(event) => setStudentName(event.target.value.slice(0, 30))}
-                  placeholder="학생 이름"
-                  aria-label="학생 이름"
-                />
-              </label>
-              {studentName.trim() ? (
-                <button type="button" onClick={() => setShowStudentSummary(true)}>상세분석 ›</button>
-              ) : null}
-            </div>
             <div className="resultOverviewText">
               <strong>분석 결과</strong>
               <span>
@@ -1648,11 +1884,16 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
 
         {showStudentSummary ? (
           <StudentSummaryDialog
-            studentName={studentName.trim()}
+            studentName={summaryStudentName}
             summary={studentSummary}
+            weeklyRecords={weeklyRecords}
+            weeklyLoading={weeklyLoading}
             onClose={() => setShowStudentSummary(false)}
           />
         ) : null}
+
+        {showStudentRecords ? <StudentRecordsDialog records={allStudentRecords} loading={allRecordsLoading} onSelect={selectStudentRecord} onDelete={deleteStudentRecord} onClose={() => setShowStudentRecords(false)} /> : null}
+        {showStudentAccess && auth ? <StudentAccessManager token={auth.token} onClose={() => setShowStudentAccess(false)} /> : null}
 
         {lightboxItem ? (
           <ImageLightbox
@@ -1673,7 +1914,11 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
 
         <footer className="footerNote">
           <div className="footerSupportButtons">
-            <a className="trialButton" href={KAKAO_LINK} target="_blank" rel="noreferrer noopener">무료체험 신청</a>
+            {auth ? (
+              <button type="button" className="footerAuthButton" onClick={onLogout}>로그아웃</button>
+            ) : (
+              <button type="button" className="footerAuthButton" onClick={() => setLoginMode('login')}>로그인</button>
+            )}
             <a className="supportButton" href={KAKAO_LINK} target="_blank" rel="noreferrer noopener">고객센터</a>
           </div>
         </footer>
@@ -1835,12 +2080,13 @@ function AdminApp({ token, onLogout }) {
 
 function RootApp() {
   const isAdmin = window.location.pathname.startsWith('/admin');
+  const isStudent = window.location.pathname.startsWith('/student');
   const [loading, setLoading] = useState(true);
   const [auth, setAuth] = useState(null);
   const [adminToken, setAdminToken] = useState(localStorage.getItem('math_checker_admin_token') || '');
 
   React.useEffect(() => {
-    if (isAdmin) { setLoading(false); return; }
+    if (isAdmin || isStudent) { setLoading(false); return; }
     const token = localStorage.getItem('math_checker_token');
     if (!token) { setLoading(false); return; }
     apiRequest('account-me', { token }).then((data)=>setAuth({ token, account:data.account })).catch(()=>localStorage.removeItem('math_checker_token')).finally(()=>setLoading(false));
@@ -1856,6 +2102,7 @@ function RootApp() {
   if (isAdmin) {
     return adminToken ? <AdminApp token={adminToken} onLogout={()=>{localStorage.removeItem('math_checker_admin_token');setAdminToken('');}} /> : <AdminLogin onLogin={setAdminToken} />;
   }
+  if (isStudent) return <StudentApp />;
   if (loading) return <main className="authPage"><div className="authLoading">로그인 상태를 확인하고 있어요...</div></main>;
   return <CheckerApp
     auth={auth}

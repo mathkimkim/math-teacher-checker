@@ -1,6 +1,6 @@
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' };
 
-import { getSessionAccount, db, publicAccount } from './_common.js';
+import { getSessionAccount, getStudentSession, db, publicAccount } from './_common.js';
 
 function json(statusCode, body) {
   return { statusCode, headers: JSON_HEADERS, body: JSON.stringify(body) };
@@ -360,7 +360,7 @@ export async function handler(event) {
     return json(405, errorBody({ title: '요청 방식 오류', reason: '이 기능은 POST 요청만 지원합니다.', solution: ['페이지를 새로고침한 뒤 다시 시도해 주세요.'], code: 'METHOD_NOT_ALLOWED', status: 405 }));
   }
 
-  const auth = await getSessionAccount(event).catch(() => null);
+  const auth = await getSessionAccount(event).catch(() => null) || await getStudentSession(event).catch(() => null);
   if (!auth?.account?.id) {
     return json(401, errorBody({ title: '로그인이 필요합니다', reason: '로그인 정보가 없거나 세션이 만료되었습니다.', solution: ['다시 로그인한 뒤 분석해 주세요.'], code: 'AUTH_REQUIRED', status: 401 }));
   }
@@ -459,6 +459,8 @@ export async function handler(event) {
         }],
         generationConfig: {
           maxOutputTokens: 2000,
+          temperature: 0,
+          seed: 42,
           responseMimeType: 'application/json',
           responseJsonSchema: resultSchema,
           thinkingConfig: { thinkingLevel: 'LOW' }

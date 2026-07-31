@@ -35,6 +35,16 @@ export async function getSessionAccount(event){
   const { password_hash, ...account } = acc[0];
   return { token, session, account };
 }
+export async function getStudentSession(event){
+  const token=bearer(event); if(!token) return null; const h=tokenHash(token);
+  const rows=await db(`student_sessions?token_hash=eq.${encodeURIComponent(h)}&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id,student_id,account_id`);
+  const session=rows?.[0]; if(!session) return null;
+  const students=await db(`students?id=eq.${encodeURIComponent(session.student_id)}&active=eq.true&select=id,account_id,student_name,active`);
+  const student=students?.[0]; if(!student) return null;
+  const accounts=await db(`accounts?id=eq.${encodeURIComponent(session.account_id)}&active=eq.true&select=*`);
+  if(!accounts?.[0]) return null;
+  return { token, session, student, account:accounts[0] };
+}
 export async function getAdminSession(event){
   const token=bearer(event); if(!token) return null; const h=tokenHash(token);
   const rows=await db(`account_sessions?token_hash=eq.${encodeURIComponent(h)}&is_admin=eq.true&expires_at=gt.${encodeURIComponent(new Date().toISOString())}&select=id,is_admin`);
