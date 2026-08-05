@@ -307,9 +307,9 @@ function formatCompactCount(value) {
 }
 
 const DEFAULT_API_PRICING = Object.freeze({
-  model: 'gemini-3.1-pro-preview',
-  inputPerMillion: 2,
-  outputPerMillion: 12
+  model: 'gemini-3.6-flash',
+  inputPerMillion: 1.5,
+  outputPerMillion: 7.5
 });
 
 function calculateUsageCost(inputTokens, outputTokens, pricing = DEFAULT_API_PRICING) {
@@ -385,6 +385,58 @@ function compressImageToDataUrl(file) {
   });
 }
 
+function splitImage(file, direction = 'vertical', position = 50) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = async () => {
+      try {
+        const ratio = Math.min(0.8, Math.max(0.2, Number(position) / 100));
+        const isVertical = direction === 'vertical';
+        const firstSize = Math.max(1, Math.floor((isVertical ? img.width : img.height) * ratio));
+        const secondSize = Math.max(1, (isVertical ? img.width : img.height) - firstSize);
+        const baseName = String(file.name || 'photo').replace(/\.[^.]+$/, '');
+        const makeHalf = (offset, cropSize, suffix) => new Promise((resolveHalf, rejectHalf) => {
+          const canvas = document.createElement('canvas');
+          canvas.width = isVertical ? cropSize : img.width;
+          canvas.height = isVertical ? img.height : cropSize;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            rejectHalf(new Error('이미지 분할 화면을 만들지 못했습니다.'));
+            return;
+          }
+          const sourceX = isVertical ? offset : 0;
+          const sourceY = isVertical ? 0 : offset;
+          const sourceWidth = isVertical ? cropSize : img.width;
+          const sourceHeight = isVertical ? img.height : cropSize;
+          ctx.drawImage(img, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              rejectHalf(new Error('분할 이미지를 만들지 못했습니다.'));
+              return;
+            }
+            resolveHalf(new File([blob], `${baseName}-${suffix}.jpg`, { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.92);
+        });
+        const halves = await Promise.all([
+          makeHalf(0, firstSize, isVertical ? '왼쪽' : '위쪽'),
+          makeHalf(firstSize, secondSize, isVertical ? '오른쪽' : '아래쪽')
+        ]);
+        URL.revokeObjectURL(objectUrl);
+        resolve(halves);
+      } catch (error) {
+        URL.revokeObjectURL(objectUrl);
+        reject(error);
+      }
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('나눌 사진을 읽지 못했습니다.'));
+    };
+    img.src = objectUrl;
+  });
+}
+
 
 
 
@@ -448,11 +500,16 @@ function normalizeErrorPayload(data, status) {
   const solutions = Array.isArray(data?.solution)
     ? data.solution.filter(Boolean)
     : [data?.help].filter(Boolean);
+  const statusSolutions = [502, 504].includes(Number(status))
+    ? ['사진을 반반 나눠서 다시 촬영해 주세요.']
+    : [500, 503].includes(Number(status))
+      ? ['잠시 후에 다시 시도해 주세요.']
+      : solutions;
 
   return {
     title: data?.title || data?.error || `분석 실패 (${status})`,
     reason: data?.reason || '요청을 처리하는 중 오류가 발생했습니다.',
-    solutions: solutions.length ? solutions : ['잠시 후 같은 사진으로 다시 시도해 주세요.'],
+    solutions: statusSolutions.length ? statusSolutions : ['잠시 후 같은 사진으로 다시 시도해 주세요.'],
     code: data?.code || 'UNKNOWN_ERROR',
     status,
     detail: data?.detail || data?.preview || ''
@@ -463,11 +520,50 @@ function AnalysisErrorCard({ error }) {
   if (!error) return null;
   const info = typeof error === 'string' ? { status: 500 } : error;
   const errorNumber = Number(info?.status) || 500;
+  const helpText = [502, 504].includes(errorNumber)
+    ? '사진을 반반 나눠서 다시 촬영해 주세요.'
+    : [500, 503].includes(errorNumber)
+      ? '잠시 후에 다시 시도해 주세요.'
+      : (info?.solutions?.[0] || '다시 한번 시도해 주세요.');
 
   return (
     <div className="analysisError" role="alert">
       <div className="analysisErrorTitle">오류번호: {errorNumber}</div>
-      <p className="analysisErrorSimpleHelp">해결방법: 다시 한번 시도해 주세요.</p>
+      <p className="analysisErrorSimpleHelp">해결방법: {helpText}</p>
+    </div>
+  );
+}
+
+function SplitModal({ item, onApply, onClose }) {
+  const [direction, setDirection] = useState('vertical');
+  const [position, setPosition] = useState(50);
+  const [working, setWorking] = useState(false);
+
+  async function apply() {
+    setWorking(true);
+    try {
+      await onApply(direction, position);
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return (
+    <div className="splitModalBackdrop" onMouseDown={(event) => event.target === event.currentTarget && !working && onClose()}>
+      <section className="splitModal" role="dialog" aria-modal="true" aria-label="사진 분할 위치 선택">
+        <header><div><span>사진 나누기</span><strong>방향과 분할선을 선택하세요</strong></div><button disabled={working} onClick={onClose}>×</button></header>
+        <div className="splitDirectionButtons">
+          <button className={direction === 'vertical' ? 'active' : ''} onClick={() => setDirection('vertical')}>좌우 분할</button>
+          <button className={direction === 'horizontal' ? 'active' : ''} onClick={() => setDirection('horizontal')}>위아래 분할</button>
+        </div>
+        <div className="splitPreview">
+          <img src={item.preview} alt={item.name} />
+          <span className={`splitGuide ${direction}`} style={direction === 'vertical' ? { left: `${position}%` } : { top: `${position}%` }} />
+        </div>
+        <label className="splitRange"><span>분할 위치 <b>{position}%</b></span><input type="range" min="20" max="80" step="1" value={position} onChange={(event) => setPosition(Number(event.target.value))}/></label>
+        <p>빨간 선을 기준으로 두 장을 만듭니다. 문제나 수식의 가운데를 피해서 조절해 주세요.</p>
+        <div className="splitModalActions"><button disabled={working} onClick={onClose}>취소</button><button className="primary" disabled={working} onClick={apply}>{working ? '나누는 중...' : '두 장으로 나누기'}</button></div>
+      </section>
     </div>
   );
 }
@@ -913,16 +1009,65 @@ function StudentAccessManager({ token, onClose }) {
 }
 
 function StudentApp() {
-  const [token,setToken]=useState(localStorage.getItem('math_checker_student_token')||''), [student,setStudent]=useState(null), [code,setCode]=useState(''), [error,setError]=useState(''), [busy,setBusy]=useState(false), [items,setItems]=useState([]), [analysisMode,setAnalysisMode]=useState('LIGHT');
+  const [token,setToken]=useState(localStorage.getItem('math_checker_student_token')||''), [student,setStudent]=useState(null), [code,setCode]=useState(''), [error,setError]=useState(''), [busy,setBusy]=useState(false), [items,setItems]=useState([]), [analysisMode,setAnalysisMode]=useState('GENERAL');
+  const [splitTarget,setSplitTarget]=useState(null);
   useEffect(()=>{if(token)apiRequest('student-access',{token}).then(d=>setStudent(d.student)).catch(()=>{localStorage.removeItem('math_checker_student_token');setToken('');});},[token]);
   async function login(e){e.preventDefault();setError('');try{const d=await apiRequest('student-access',{method:'POST',body:{code}});localStorage.setItem('math_checker_student_token',d.token);setToken(d.token);setStudent(d.student);}catch(x){setError(x.message);}}
   function add(files){setItems(Array.from(files||[]).filter(f=>f.type.startsWith('image/')).slice(0,10).map((file,i)=>({id:`${Date.now()}-${i}`,file,name:file.name,preview:URL.createObjectURL(file),status:'ready',result:null,error:null})));}
   function removeLocal(id){setItems(p=>{const target=p.find(x=>x.id===id);if(target?.preview)URL.revokeObjectURL(target.preview);return p.filter(x=>x.id!==id);});}
-  async function analyzeOneStudent(item){try{setItems(p=>p.map(x=>x.id===item.id?{...x,status:'analyzing',error:null}:x));const imageDataUrl=await compressImageToDataUrl(item.file);const res=await fetch('/.netlify/functions/analyze',{method:'POST',headers:apiHeaders(token),body:JSON.stringify({imageDataUrl,fileName:item.name,analysisMode})});const data=await res.json();if(!res.ok)throw normalizeErrorPayload(data,res.status);await apiRequest('student-access',{method:'POST',token,body:{recordId:item.id,fileName:item.name,imageDataUrl,problems:data.problems||[]}});setItems(p=>p.map(x=>x.id===item.id?{...x,status:'done',result:null,error:null}:x));}catch(e){setItems(p=>p.map(x=>x.id===item.id?{...x,status:'error',result:null,error:e}:x));}}
-  async function analyze(){if(!items.length||busy)return;setBusy(true);for(const item of items.filter(x=>x.status==='ready'||x.status==='error'))await analyzeOneStudent(item);setBusy(false);}
+  async function splitLocal(direction,position){
+    const item=splitTarget;
+    if(!item)return;
+    if(busy)return;
+    try{
+      const halves=await splitImage(item.file,direction,position);
+      const replacement=halves.map((file,index)=>({id:`${Date.now()}-${index}-${file.name}`,file,name:file.name,preview:URL.createObjectURL(file),status:'ready',result:null,error:null}));
+      setItems(previous=>previous.flatMap(current=>{
+        if(current.id!==item.id)return [current];
+        if(current.preview)URL.revokeObjectURL(current.preview);
+        return replacement;
+      }));
+      setSplitTarget(null);
+    }catch(error){alert(error.message||'사진을 나누지 못했습니다.');}
+  }
+  async function analyzeOneStudent(item, selectedMode=analysisMode){
+    try {
+      setItems(p=>p.map(x=>x.id===item.id?{...x,status:'analyzing',error:null}:x));
+      const imageDataUrl=await compressImageToDataUrl(item.file);
+      let res;
+      let data;
+      for(let attempt=0;attempt<2;attempt+=1){
+        res=await fetch('/.netlify/functions/analyze',{method:'POST',headers:apiHeaders(token),body:JSON.stringify({imageDataUrl,fileName:item.name,analysisMode:selectedMode})});
+        data=await res.json().catch(()=>({}));
+        const retryable=[500,503].includes(res.status);
+        const remaining=data?.account?Math.max(0,Number(data.account.limit_count||0)-Number(data.account.used_count||0)):1;
+        if(attempt===0&&retryable&&remaining>0){
+          setItems(p=>p.map(x=>x.id===item.id?{...x,status:'retrying'}:x));
+          await new Promise(resolve=>setTimeout(resolve,5000));
+          setItems(p=>p.map(x=>x.id===item.id?{...x,status:'analyzing'}:x));
+          continue;
+        }
+        break;
+      }
+      if(!res.ok)throw normalizeErrorPayload(data,res.status);
+      await apiRequest('student-access',{method:'POST',token,body:{recordId:item.id,fileName:item.name,imageDataUrl,problems:data.problems||[]}});
+      setItems(p=>p.map(x=>x.id===item.id?{...x,status:'done',result:null,error:null}:x));
+    }catch(e){setItems(p=>p.map(x=>x.id===item.id?{...x,status:'error',result:null,error:e}:x));}
+  }
+  async function analyze(){
+    if(!items.length||busy)return;
+    setBusy(true);
+    const selectedMode=analysisMode;
+    const queue=items.filter(x=>x.status==='ready'||x.status==='error');
+    let nextIndex=0;
+    async function worker(){while(nextIndex<queue.length){const item=queue[nextIndex];nextIndex+=1;await analyzeOneStudent(item,selectedMode);}}
+    const workerCount=Math.min(3,queue.length);
+    await Promise.all(Array.from({length:workerCount},()=>worker()));
+    setBusy(false);
+  }
   async function retry(item){if(busy)return;setBusy(true);await analyzeOneStudent(item);setBusy(false);}
   if(!token||!student)return <main className="studentPortal"><section className="studentLoginCard"><div className="brandMark">✓</div><span>풀이체커 학생용</span><h1>내 풀이 촬영하기</h1><p>선생님에게 받은 6자리 접속코드를 입력하세요.</p><form onSubmit={login}><input inputMode="numeric" maxLength="6" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} placeholder="6자리 접속코드"/>{error?<div className="authAlert error">{error}</div>:null}<button>시작하기</button></form></section></main>;
-  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='PRO'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('PRO')}>PRO</button><button className={analysisMode==='LIGHT'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('LIGHT')}>LIGHT</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>AI가 풀이를 확인하고 있어요...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.status==='error'?<><p className="studentError">분석 실패</p><button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p></main>;
+  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='ADVANCED'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('ADVANCED')}>HIGH</button><button className={analysisMode==='MIDDLE'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('MIDDLE')}>MED</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>AI가 풀이를 확인하고 있어요...</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
 }
 
 function ImageLightbox({ src, alt, onClose }) {
@@ -1225,12 +1370,13 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [editTargetId, setEditTargetId] = useState(null);
+  const [splitTarget, setSplitTarget] = useState(null);
   const [verdictTarget, setVerdictTarget] = useState(null);
   const [lightboxItem, setLightboxItem] = useState(null);
   const [loginMode, setLoginMode] = useState(null);
   const [hideCorrect, setHideCorrect] = useState(false);
   const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
-  const [analysisMode, setAnalysisMode] = useState('PRO');
+  const [analysisMode, setAnalysisMode] = useState('GENERAL');
   const [studentName, setStudentName] = useState('');
   const [showStudentSummary, setShowStudentSummary] = useState(false);
   const [summaryStudentName, setSummaryStudentName] = useState('');
@@ -1310,6 +1456,34 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     });
   }
 
+  async function applySplitItem(direction, position) {
+    const item = splitTarget;
+    if (!item) return;
+    if (busy) return;
+    try {
+      const halves = await splitImage(item.file, direction, position);
+      const replacement = halves.map((file, index) => ({
+        id: `${Date.now()}-${index}-${file.name}`,
+        file,
+        name: file.name,
+        size: file.size,
+        preview: URL.createObjectURL(file),
+        status: 'ready',
+        result: null,
+        error: null,
+        edited: true
+      }));
+      setItems((previous) => previous.flatMap((current) => {
+        if (current.id !== item.id) return [current];
+        if (current.preview) URL.revokeObjectURL(current.preview);
+        return replacement;
+      }));
+      setSplitTarget(null);
+    } catch (error) {
+      alert(error?.message || '사진을 나누지 못했습니다.');
+    }
+  }
+
   function clearAll() {
     items.forEach((x) => x.preview && URL.revokeObjectURL(x.preview));
     setItems([]);
@@ -1361,22 +1535,38 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
 
     setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'analyzing' } : x));
 
-    const controller = new AbortController();
-    requestControllersRef.current.set(item.id, controller);
     let res;
+    let data;
     try {
-      res = await fetch('/.netlify/functions/analyze', {
-        method: 'POST',
-        headers: apiHeaders(sessionToken),
-        signal: controller.signal,
-        body: JSON.stringify({ imageDataUrl, fileName: item.name, analysisMode: selectedMode })
-      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const controller = new AbortController();
+        requestControllersRef.current.set(item.id, controller);
+        res = await fetch('/.netlify/functions/analyze', {
+          method: 'POST',
+          headers: apiHeaders(sessionToken),
+          signal: controller.signal,
+          body: JSON.stringify({ imageDataUrl, fileName: item.name, analysisMode: selectedMode })
+        });
+        data = await res.json().catch(() => ({}));
+        if (data?.account) onAccountUpdate(data.account);
+
+        const retryable = [500, 503].includes(res.status);
+        const remainingAfterAttempt = data?.account
+          ? Math.max(0, Number(data.account.limit_count || 0) - Number(data.account.used_count || 0))
+          : 1;
+        if (attempt === 0 && retryable && remainingAfterAttempt > 0) {
+          setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'retrying' } : x));
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          if (analysisStoppedRef.current) throw new DOMException('분석이 중단되었습니다.', 'AbortError');
+          setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, status: 'analyzing' } : x));
+          continue;
+        }
+        break;
+      }
     } finally {
       requestControllersRef.current.delete(item.id);
     }
 
-    const data = await res.json().catch(() => ({}));
-    if (data?.account) onAccountUpdate(data.account);
     if (!res.ok) {
       throw normalizeErrorPayload(data, res.status);
     }
@@ -1447,11 +1637,11 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     }
   }
 
-  async function runAnalysis(session) {
-    if (!items.length || busy) return;
+  async function runAnalysis(session, targetItems = items) {
+    if (!targetItems.length || busy) return;
     const sessionAccount = session?.account;
     const sessionRemaining = Math.max(0, Number(sessionAccount?.limit_count || 0) - Number(sessionAccount?.used_count || 0));
-    if (sessionRemaining < items.length) {
+    if (sessionRemaining < targetItems.length) {
       alert(`남은 분석 가능 횟수는 ${sessionRemaining}장입니다. 사진 수를 줄여 주세요.`);
       return;
     }
@@ -1460,7 +1650,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     analysisStoppedRef.current = false;
     setBusy(true);
 
-    const queue = [...items];
+    const queue = [...targetItems];
     let nextIndex = 0;
 
     async function worker() {
@@ -1497,7 +1687,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     requestControllersRef.current.forEach((controller) => controller.abort());
     requestControllersRef.current.clear();
     setItems((previous) => previous.map((item) => (
-      item.status === 'compressing' || item.status === 'analyzing'
+      item.status === 'compressing' || item.status === 'analyzing' || item.status === 'retrying'
         ? { ...item, status: 'ready', error: null }
         : item
     )));
@@ -1516,12 +1706,28 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     runAnalysis(auth);
   }
 
+  function reanalyzeAllErrors() {
+    const errorItems = items.filter((item) => item.status === 'error');
+    if (!errorItems.length || busy) return;
+    if (!normalizeStudentName(studentName)) {
+      alert('분석 전에 학생 이름을 입력해 주세요.');
+      return;
+    }
+    if (!auth) {
+      setLoginMode('reanalyze-errors');
+      return;
+    }
+    runAnalysis(auth, errorItems);
+  }
+
   async function completeLogin(data) {
     const session = { token: data.token, account: data.account };
     onLogin(session);
     const shouldAnalyze = loginMode === 'analyze';
+    const shouldReanalyzeErrors = loginMode === 'reanalyze-errors';
     setLoginMode(null);
     if (shouldAnalyze) await runAnalysis(session);
+    if (shouldReanalyzeErrors) await runAnalysis(session, items.filter((item) => item.status === 'error'));
   }
 
   function copyResult(item) {
@@ -1557,6 +1763,9 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   const reviewProblems = allAnalyzedProblems.filter((problem) => problem?.verdict === '확인 필요').length;
   const calculationErrors = allAnalyzedProblems.filter((problem) => problem?.verdict === '틀림' && problem?.errorType === '계산오류').length;
   const conceptErrors = allAnalyzedProblems.filter((problem) => problem?.verdict === '틀림' && problem?.errorType === '개념오류').length;
+  const totalAnalysisCost = items.reduce((sum, item) => (
+    sum + Math.max(0, Number(item.result?.usage?.estimatedCostUsd || 0))
+  ), 0);
   const studentSummary = {
     total: analyzedProblems,
     correct: correctProblems,
@@ -1669,8 +1878,9 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
 
         <div className="topbarActions">
           <div className="modelModeToggle" aria-label="분석 모델 선택">
-            <button type="button" className={analysisMode === 'PRO' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('PRO')}>PRO</button>
-            <button type="button" className={analysisMode === 'LIGHT' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('LIGHT')}>LIGHT</button>
+            <button type="button" className={analysisMode === 'ADVANCED' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('ADVANCED')}>HIGH</button>
+            <button type="button" className={analysisMode === 'MIDDLE' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('MIDDLE')}>MED</button>
+            <button type="button" className={analysisMode === 'GENERAL' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('GENERAL')}>LOW</button>
           </div>
           <span className="analysisTimeBadge">분석시간 <b>{formatAnalysisSeconds(analysisElapsedSeconds)}</b></span>
           {auth ? (
@@ -1753,7 +1963,8 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
               <span>
                 총 <b>{analyzedProblems.toLocaleString()}</b>문제 중
                 틀림 <em>{incorrectProblems.toLocaleString()}</em>문제 ·
-                확인 필요 <i>{reviewProblems.toLocaleString()}</i>문제
+                확인 필요 <i>{reviewProblems.toLocaleString()}</i>문제 ·
+                총 비용 <b>{formatUsd(totalAnalysisCost)}</b>
               </span>
             </div>
             <button
@@ -1787,6 +1998,9 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
               <path d="M10 10.5v5.5M14 10.5v5.5" />
             </svg>
             <span>전체 삭제</span>
+          </button>
+          <button className="reanalyzeAllErrorsButton" disabled={busy || !items.some((item) => item.status === 'error')} onClick={reanalyzeAllErrors}>
+            <span>오류 전체 재분석</span>
           </button>
         </div>
 
@@ -1830,7 +2044,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
                   <div className="cardTools">
                     {(item.result || item.status === 'error') ? (
                       <button className="reanalyzeLinkBtn" disabled={busy} onClick={() => reanalyzeItem(item)}>
-                        {item.status === 'compressing' || item.status === 'analyzing' ? '재분석 중...' : '재분석'}
+                        {item.status === 'compressing' || item.status === 'analyzing' || item.status === 'retrying' ? '재분석 중...' : '재분석'}
                       </button>
                     ) : null}
                     <button className="cropLinkBtn" disabled={busy} onClick={() => openEditor(item.id)}>편집</button>
@@ -1838,11 +2052,20 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
                   </div>
                 </div>
                 <p className="meta">{item.name} · {formatBytes(item.size)}{item.edited ? ' · 편집 적용됨' : ''}</p>
+                {item.result?.usage ? (
+                  <div className="photoTokenUsage">
+                    입력 {Number(item.result.usage.inputTokens || 0).toLocaleString()} · 일반출력 {Number(item.result.usage.answerTokens || 0).toLocaleString()} · 추론 {Number(item.result.usage.thinkingTokens || 0).toLocaleString()} · 총 {Number(item.result.usage.totalTokens || 0).toLocaleString()}토큰 · {formatUsd(item.result.usage.estimatedCostUsd)}
+                  </div>
+                ) : null}
 
                 {item.status === 'ready' && <p className="muted">분석할 준비가 됐어요.</p>}
                 {item.status === 'compressing' && <p className="muted loadingText">이미지 전송 준비 중...</p>}
                 {item.status === 'analyzing' && <p className="muted loadingText">AI가 풀이를 검산하고 있어요...</p>}
+                {item.status === 'retrying' && <p className="muted loadingText">일시 오류로 5초 후 자동 재시도 중입니다...</p>}
                 {item.status === 'error' && <AnalysisErrorCard error={item.error} />}
+                {item.status === 'error' && [502, 504].includes(Number(item.error?.status)) ? (
+                  <button className="reanalyzeAllErrorsButton" disabled={busy} onClick={() => setSplitTarget(item)}>사진 나누기</button>
+                ) : null}
 
                 {item.result && <ResultCard
                   item={item}
@@ -1872,6 +2095,8 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
             onApply={applyEdit}
           />
         ) : null}
+
+        {splitTarget ? <SplitModal item={splitTarget} onApply={applySplitItem} onClose={() => setSplitTarget(null)} /> : null}
 
         {verdictTarget ? (
           <VerdictDialog
@@ -1989,8 +2214,9 @@ function AdminApp({ token, onLogout }) {
     return counts;
   }, {});
 
-  function modelUsage(accountId, model) {
-    return usage.filter((row) => row.account_id === accountId && row.model === model).reduce((sum, row) => ({
+  function modelUsage(accountId, models) {
+    const modelList = Array.isArray(models) ? models : [models];
+    return usage.filter((row) => row.account_id === accountId && modelList.includes(row.model)).reduce((sum, row) => ({
       input: sum.input + Number(row.input_tokens || 0),
       answer: sum.answer + Number(row.answer_tokens || 0),
       thinking: sum.thinking + Number(row.thinking_tokens || 0),
@@ -1999,17 +2225,50 @@ function AdminApp({ token, onLogout }) {
     }), { input:0, answer:0, thinking:0, total:0, cost:0 });
   }
 
+  const modeModels = {
+    HIGH: ['gemini-3.6-flash-high', 'gemini-3.6-flash-pro', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3.6-flash-light', 'gemini-3.5-flash', 'gemini-3.6-flash'],
+    MED: ['gemini-3.6-flash-medium', 'gemini-3.6-flash-middle'],
+    LOW: ['gemini-3.6-flash-low']
+  };
+  const tokenRanges = [
+    { label: '0–999', min: 0, max: 1000 },
+    ...Array.from({ length: 9 }, (_, index) => ({
+      label: `${((index + 1) * 1000).toLocaleString()}–${(((index + 2) * 1000) - 1).toLocaleString()}`,
+      min: (index + 1) * 1000,
+      max: (index + 2) * 1000
+    })),
+    { label: '10,000 이상', min: 10000, max: Infinity }
+  ];
+  const usageByMode = Object.fromEntries(Object.entries(modeModels).map(([mode, models]) => [
+    mode,
+    usage.filter((row) => models.includes(row.model))
+  ]));
+  function rangeUsageCount(mode, range) {
+    return (usageByMode[mode] || []).filter((row) => {
+      const outputTokens = Math.max(0, Number(row.output_tokens || 0));
+      return outputTokens >= range.min && outputTokens < range.max;
+    }).length;
+  }
+  function formatRangeCount(mode, range) {
+    const count = rangeUsageCount(mode, range);
+    const total = (usageByMode[mode] || []).length;
+    const percent = total ? (count / total) * 100 : 0;
+    return `${count.toLocaleString()}건 · ${percent.toFixed(1)}%`;
+  }
+
   async function downloadExcel() {
     const XLSX = await import('xlsx');
     const summary = accounts.map((account) => {
-      const pro = modelUsage(account.id, 'gemini-3.1-pro-preview');
-      const light = modelUsage(account.id, 'gemini-3.5-flash');
+      const advanced = modelUsage(account.id, ['gemini-3.6-flash-high', 'gemini-3.6-flash-pro', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3.6-flash-light', 'gemini-3.5-flash', 'gemini-3.6-flash']);
+      const general = modelUsage(account.id, ['gemini-3.6-flash-low']);
+      const middle = modelUsage(account.id, ['gemini-3.6-flash-medium', 'gemini-3.6-flash-middle']);
       return {
         아이디: account.login_id, 총한도: account.limit_count, 사용: account.used_count,
         남음: Math.max(0, account.limit_count - account.used_count), 상태: account.active ? '사용중' : '중지',
-        'PRO 입력토큰': pro.input, 'PRO 일반출력': pro.answer, 'PRO 추론': pro.thinking, 'PRO 총토큰': pro.total, 'PRO 비용(USD)': pro.cost,
-        'LIGHT 입력토큰': light.input, 'LIGHT 일반출력': light.answer, 'LIGHT 추론': light.thinking, 'LIGHT 총토큰': light.total, 'LIGHT 비용(USD)': light.cost,
-        '총비용(USD)': pro.cost + light.cost, 생성일: account.created_at
+        'HIGH 입력토큰': advanced.input, 'HIGH 일반출력': advanced.answer, 'HIGH 추론': advanced.thinking, 'HIGH 총토큰': advanced.total, 'HIGH 비용(USD)': advanced.cost,
+        'MED 입력토큰': middle.input, 'MED 일반출력': middle.answer, 'MED 추론': middle.thinking, 'MED 총토큰': middle.total, 'MED 비용(USD)': middle.cost,
+        'LOW 입력토큰': general.input, 'LOW 일반출력': general.answer, 'LOW 추론': general.thinking, 'LOW 총토큰': general.total, 'LOW 비용(USD)': general.cost,
+        '총비용(USD)': advanced.cost + general.cost + middle.cost, 생성일: account.created_at
       };
     });
     const accountMap = Object.fromEntries(accounts.map((account) => [account.id, account.login_id]));
@@ -2033,7 +2292,23 @@ function AdminApp({ token, onLogout }) {
         <div><span>전체 일반출력</span><b>{formatCompactCount(totalAnswerTokens)}</b></div>
         <div><span>전체 추론토큰</span><b>{formatCompactCount(totalThinkingTokens)}</b></div>
         <div><span>누적 예상비용</span><b>{formatUsd(totalEstimatedCost)} USD</b></div>
-        <p>PRO·LIGHT 실제 사용량 기준</p>
+        <p>HIGH·MED·LOW 실제 사용량 기준</p>
+      </section>
+      <section className="adminErrorPanel" aria-label="출력 및 추론 토큰 구간 통계">
+        <div className="adminErrorHeading">
+          <div><h2>출력+추론 토큰 구간 통계</h2><p>분석 1건당 실제 output_tokens 기준 · 건수와 모드 내 비율</p></div>
+          <strong>총 {usage.length.toLocaleString()}건</strong>
+        </div>
+        <div className="adminErrorTableWrap">
+          <table className="adminErrorTable"><thead><tr><th>토큰 구간</th><th>HIGH</th><th>MED</th><th>LOW</th></tr></thead><tbody>
+            {tokenRanges.map((range) => <tr key={range.label}>
+              <td><b>{range.label}</b></td>
+              <td>{formatRangeCount('HIGH', range)}</td>
+              <td>{formatRangeCount('MED', range)}</td>
+              <td>{formatRangeCount('LOW', range)}</td>
+            </tr>)}
+          </tbody></table>
+        </div>
       </section>
       <section className="adminErrorPanel" aria-label="분석 오류 현황">
         <div className="adminErrorHeading">
@@ -2059,11 +2334,12 @@ function AdminApp({ token, onLogout }) {
       </section>
       <section className="adminCreate"><h2>새 계정 만들기</h2><div className="adminFormRow"><input placeholder="아이디" value={form.loginId} onChange={(e)=>setForm({...form,loginId:e.target.value})}/><input placeholder="비밀번호" type="password" value={form.password} onChange={(e)=>setForm({...form,password:e.target.value})}/><input type="number" min="0" value={form.limitCount} onChange={(e)=>setForm({...form,limitCount:e.target.value})}/><button onClick={()=>action('create',{...form,limitCount:Number(form.limitCount)})}>계정 생성</button></div></section>
       {error?<div className="authAlert error">{error}</div>:null}{message?<div className="authAlert success">{message}</div>:null}
-      <section className="adminTableWrap"><table className="adminTable"><thead><tr><th>아이디</th><th>총 한도</th><th>사용</th><th>남음</th><th>PRO 토큰·비용</th><th>LIGHT 토큰·비용</th><th>총비용(USD)</th><th>상태</th><th>관리</th></tr></thead><tbody>
+      <section className="adminTableWrap"><table className="adminTable"><thead><tr><th>아이디</th><th>총 한도</th><th>사용</th><th>남음</th><th>HIGH 토큰·비용</th><th>LOW 토큰·비용</th><th>MED 토큰·비용</th><th>총비용(USD)</th><th>상태</th><th>관리</th></tr></thead><tbody>
         {accounts.map(a=>{
-          const pro = modelUsage(a.id, 'gemini-3.1-pro-preview');
-          const light = modelUsage(a.id, 'gemini-3.5-flash');
-          return <tr key={a.id}><td><b>{a.login_id}</b></td><td>{a.limit_count}</td><td>{a.used_count}</td><td>{Math.max(0,a.limit_count-a.used_count)}</td><td title={`입력 ${pro.input.toLocaleString()} / 일반출력 ${pro.answer.toLocaleString()} / 추론 ${pro.thinking.toLocaleString()}`}><span>입 {formatCompactCount(pro.input)} · 출 {formatCompactCount(pro.answer)} · 추 {formatCompactCount(pro.thinking)}</span><br/><b>총 {formatCompactCount(pro.total)} · {formatUsd(pro.cost)}</b></td><td title={`입력 ${light.input.toLocaleString()} / 일반출력 ${light.answer.toLocaleString()} / 추론 ${light.thinking.toLocaleString()}`}><span>입 {formatCompactCount(light.input)} · 출 {formatCompactCount(light.answer)} · 추 {formatCompactCount(light.thinking)}</span><br/><b>총 {formatCompactCount(light.total)} · {formatUsd(light.cost)}</b></td><td><b>{formatUsd(pro.cost + light.cost)}</b></td><td>{a.active?'사용중':'중지'}</td><td><div className="adminButtons">
+          const advanced = modelUsage(a.id, ['gemini-3.6-flash-high', 'gemini-3.6-flash-pro', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3.6-flash-light', 'gemini-3.5-flash', 'gemini-3.6-flash']);
+          const general = modelUsage(a.id, ['gemini-3.6-flash-low']);
+          const middle = modelUsage(a.id, ['gemini-3.6-flash-medium', 'gemini-3.6-flash-middle']);
+          return <tr key={a.id}><td><b>{a.login_id}</b></td><td>{a.limit_count}</td><td>{a.used_count}</td><td>{Math.max(0,a.limit_count-a.used_count)}</td><td title={`입력 ${advanced.input.toLocaleString()} / 일반출력 ${advanced.answer.toLocaleString()} / 추론 ${advanced.thinking.toLocaleString()}`}><span>입 {formatCompactCount(advanced.input)} · 출 {formatCompactCount(advanced.answer)} · 추 {formatCompactCount(advanced.thinking)}</span><br/><b>총 {formatCompactCount(advanced.total)} · {formatUsd(advanced.cost)}</b></td><td title={`입력 ${general.input.toLocaleString()} / 일반출력 ${general.answer.toLocaleString()} / 추론 ${general.thinking.toLocaleString()}`}><span>입 {formatCompactCount(general.input)} · 출 {formatCompactCount(general.answer)} · 추 {formatCompactCount(general.thinking)}</span><br/><b>총 {formatCompactCount(general.total)} · {formatUsd(general.cost)}</b></td><td title={`입력 ${middle.input.toLocaleString()} / 일반출력 ${middle.answer.toLocaleString()} / 추론 ${middle.thinking.toLocaleString()}`}><span>입 {formatCompactCount(middle.input)} · 출 {formatCompactCount(middle.answer)} · 추 {formatCompactCount(middle.thinking)}</span><br/><b>총 {formatCompactCount(middle.total)} · {formatUsd(middle.cost)}</b></td><td><b>{formatUsd(advanced.cost + general.cost + middle.cost)}</b></td><td>{a.active?'사용중':'중지'}</td><td><div className="adminButtons">
           <button onClick={()=>action('add_limit',{accountId:a.id,amount:10})}>+10</button><button onClick={()=>action('add_limit',{accountId:a.id,amount:50})}>+50</button><button onClick={()=>action('add_limit',{accountId:a.id,amount:100})}>+100</button>
           <button onClick={()=>{const amount=Number(prompt('추가할 장수를 입력하세요.','500')); if(amount>0) action('add_limit',{accountId:a.id,amount});}}>직접 추가</button>
           <button onClick={()=>{const n=Number(prompt('총 분석 가능 장수를 입력하세요.',String(a.limit_count))); if(n>=0) action('set_limit',{accountId:a.id,limitCount:n});}}>한도 변경</button>

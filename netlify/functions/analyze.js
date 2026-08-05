@@ -289,12 +289,18 @@ function getResponseTokenUsage(data) {
 
 const MODEL_PRICING = {
   'gemini-3.1-pro-preview': { input: 2, output: 12, largeInput: 4, largeOutput: 18 },
-  'gemini-3.5-flash': { input: 1.5, output: 9, largeInput: 1.5, largeOutput: 9 }
+  'gemini-3.6-flash': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 },
+  'gemini-3.6-flash-pro': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 },
+  'gemini-3.6-flash-light': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 },
+  'gemini-3.6-flash-middle': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 },
+  'gemini-3.6-flash-high': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 },
+  'gemini-3.6-flash-medium': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 },
+  'gemini-3.6-flash-low': { input: 1.5, output: 7.5, largeInput: 1.5, largeOutput: 7.5 }
 };
 
 function usageCost(model, usage) {
-  const price = MODEL_PRICING[model] || MODEL_PRICING['gemini-3.1-pro-preview'];
-  const large = model === 'gemini-3.1-pro-preview' && usage.inputTokens > 200000;
+  const price = MODEL_PRICING[model] || MODEL_PRICING['gemini-3.6-flash'];
+  const large = Number(usage?.inputTokens || 0) > 200000;
   const inputRate = large ? price.largeInput : price.input;
   const outputRate = large ? price.largeOutput : price.output;
   return (usage.inputTokens / 1000000) * inputRate + (usage.outputTokens / 1000000) * outputRate;
@@ -302,16 +308,25 @@ function usageCost(model, usage) {
 
 async function recordUsage(accountId, model, usage) {
   if (!accountId || !usage?.totalTokens) return;
-  await db('analysis_usage', { method: 'POST', body: {
+  const commonUsage = {
     account_id: accountId,
     model,
     input_tokens: usage.inputTokens,
-    answer_tokens: usage.answerTokens,
-    thinking_tokens: usage.thinkingTokens,
     output_tokens: usage.outputTokens,
     total_tokens: usage.totalTokens,
     estimated_cost_usd: usageCost(model, usage)
-  }});
+  };
+
+  try {
+    await db('analysis_usage', { method: 'POST', body: {
+      ...commonUsage,
+      answer_tokens: usage.answerTokens,
+      thinking_tokens: usage.thinkingTokens
+    }});
+  } catch (error) {
+    // 예전 analysis_usage 테이블에도 최소 토큰·비용 기록은 남깁니다.
+    await db('analysis_usage', { method: 'POST', body: commonUsage });
+  }
 }
 
 async function addTokenUsageToAccount(accountId, usage) {
@@ -391,8 +406,14 @@ export async function handler(event) {
   }
   const [, imageMimeType, imageBase64] = imageMatch;
 
-  const analysisMode = String(payload.analysisMode || 'PRO').toUpperCase();
-  const model = analysisMode === 'LIGHT' ? 'gemini-3.5-flash' : 'gemini-3.1-pro-preview';
+  const requestedMode = String(payload.analysisMode || 'GENERAL').toUpperCase();
+  const isAdvanced = requestedMode === 'ADVANCED';
+  const isMiddle = requestedMode === 'MIDDLE';
+  const analysisMode = isAdvanced ? 'ADVANCED' : (isMiddle ? 'MIDDLE' : 'GENERAL');
+  const model = 'gemini-3.6-flash';
+  const usageModel = isAdvanced
+    ? 'gemini-3.6-flash-high'
+    : (isMiddle ? 'gemini-3.6-flash-medium' : 'gemini-3.6-flash-low');
 
   let account = auth.account;
 
@@ -433,14 +454,34 @@ export async function handler(event) {
 
   account = reservedAccount;
 
-  const controller = new AbortController();
-  const timeoutMs = 30000;
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  const timeoutMs = isAdvanced ? 45000 : 30000;
+  let timeoutId = null;
 
   try {
     const instruction = systemPrompt;
     const userText = '사진 속 풀이가 있는 문제를 번호별로 모두 분리해 각각 검산하고 최종 JSON만 반환하세요.';
 
+    const requestBody = JSON.stringify({
+      systemInstruction: { parts: [{ text: instruction }] },
+      contents: [{
+        role: 'user',
+        parts: [
+          { text: userText },
+          { inlineData: { mimeType: imageMimeType, data: imageBase64 } }
+        ]
+      }],
+      generationConfig: {
+        maxOutputTokens: 6000,
+        temperature: 0.2,
+        seed: 42,
+        responseMimeType: 'application/json',
+        responseJsonSchema: resultSchema,
+        thinkingConfig: { thinkingLevel: isAdvanced ? 'HIGH' : (isMiddle ? 'MEDIUM' : 'LOW') }
+      }
+    });
+
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
       signal: controller.signal,
@@ -448,27 +489,10 @@ export async function handler(event) {
         'x-goog-api-key': apiKey,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: instruction }] },
-        contents: [{
-          role: 'user',
-          parts: [
-            { text: userText },
-            { inlineData: { mimeType: imageMimeType, data: imageBase64 } }
-          ]
-        }],
-        generationConfig: {
-          maxOutputTokens: 2000,
-          temperature: 0,
-          seed: 42,
-          responseMimeType: 'application/json',
-          responseJsonSchema: resultSchema,
-          thinkingConfig: { thinkingLevel: 'LOW' }
-        }
-      })
+      body: requestBody
     });
-
     clearTimeout(timeoutId);
+    timeoutId = null;
     const data = await response.json().catch(() => ({}));
 
     // 실제 API 입력·출력·추론 토큰을 현재 로그인 아이디에 누적합니다.
@@ -477,7 +501,7 @@ export async function handler(event) {
       try {
         const tokenTotals = await addTokenUsageToAccount(auth.account.id, responseUsage);
         if (tokenTotals) account = { ...account, ...tokenTotals };
-        await recordUsage(auth.account.id, model, responseUsage);
+        await recordUsage(auth.account.id, usageModel, responseUsage);
       } catch (tokenError) {
         console.error('TOKEN_TRACKING_FAILED', tokenError);
       }
@@ -485,7 +509,7 @@ export async function handler(event) {
 
     if (!response.ok) {
       const message = data?.error?.message || 'Gemini API 오류';
-      const code = data?.error?.status || data?.error?.code || 'GEMINI_ERROR';
+      let code = data?.error?.status || data?.error?.code || 'GEMINI_ERROR';
       const lower = message.toLowerCase();
       let title = 'AI 서비스 호출 실패';
       let reason = message;
@@ -503,10 +527,20 @@ export async function handler(event) {
         title = '요청이 너무 많습니다';
         reason = '짧은 시간에 요청이 몰려 분석이 제한되었습니다.';
         solution = ['잠시 기다린 뒤 다시 분석해 주세요.', '한 번에 올리는 사진 수를 줄여 다시 시도하세요.'];
+      } else if (response.status === 500) {
+        code = 'GEMINI_INTERNAL_ERROR';
+        title = 'Gemini 내부 처리 오류';
+        reason = 'Gemini가 요청을 처리하는 중 내부 오류를 반환했습니다.';
+        solution = ['잠시 후에 다시 시도해 주세요.'];
+      } else if (response.status === 502) {
+        title = 'AI 응답 처리 오류';
+        reason = '사진의 문제나 풀이가 많아 AI 응답을 정상적으로 처리하지 못했습니다.';
+        solution = ['사진을 반반 나눠서 다시 촬영해 주세요.'];
       } else if (response.status === 503 || code === 'UNAVAILABLE' || lower.includes('temporarily unavailable')) {
+        code = 'GEMINI_UNAVAILABLE';
         title = 'AI 서버 일시 혼잡';
         reason = 'AI 분석 서버가 일시적으로 응답하지 않습니다.';
-        solution = ['잠시 후 다시 분석해 주세요.'];
+        solution = ['잠시 후에 다시 시도해 주세요.'];
       } else if (response.status === 404) {
         title = 'AI 모델 설정 오류';
         reason = '설정된 모델을 찾을 수 없거나 사용할 권한이 없습니다.';
@@ -522,10 +556,7 @@ export async function handler(event) {
       return json(502, errorBody({
         title: 'AI 응답 미완료',
         reason: '분석 결과가 길이 제한에 도달해 중간에 종료되었습니다.',
-        solution: [
-          '📷 사진을 위·아래 또는 좌·우로 반씩 나누어 다시 업로드해 보세요.',
-          '같은 사진으로 다시 한 번 분석해 보세요.'
-        ],
+        solution: ['사진을 반반 나눠서 다시 촬영해 주세요.'],
         code: reasonCode,
         status: 502,
         account
@@ -542,7 +573,7 @@ export async function handler(event) {
       return json(502, errorBody({
         title: '분석 결과 해석 실패',
         reason: blockReason ? `Gemini가 요청을 처리하지 못했습니다: ${blockReason}` : 'AI는 응답했지만 문제별 결과 형식으로 변환하지 못했습니다.',
-        solution: ['같은 사진을 다시 분석해 주세요.', '사진이 선명한지 확인해 주세요.', '반복되면 사진을 나누어 올려 주세요.'],
+        solution: ['사진을 반반 나눠서 다시 촬영해 주세요.'],
         code: 'INVALID_AI_RESPONSE',
         status: 502,
         detail: outputText.slice(0, 300),
@@ -595,15 +626,24 @@ export async function handler(event) {
       return { number, verdict, message, studentExpression, correctExpression, difference, errorType };
     });
 
-    return json(200, { problems, model, analysisMode, account: publicAccount(account) });
+    return json(200, {
+      problems,
+      model,
+      analysisMode,
+      usage: {
+        ...responseUsage,
+        estimatedCostUsd: usageCost(usageModel, responseUsage)
+      },
+      account: publicAccount(account)
+    });
   } catch (error) {
-    clearTimeout(timeoutId);
+    if (timeoutId) clearTimeout(timeoutId);
 
     if (error?.name === 'AbortError') {
       return json(504, errorBody({
         title: '분석 시간 초과',
         reason: '사진에 문제나 풀이가 많거나 이미지가 복잡해 제한 시간 안에 분석이 끝나지 않았습니다.',
-        solution: ['같은 사진을 다시 분석해 주세요.', '한 페이지를 나누어 촬영해 주세요.', '풀이가 선명하게 보이도록 다시 촬영해 주세요.'],
+        solution: ['사진을 반반 나눠서 다시 촬영해 주세요.'],
         code: 'ANALYSIS_TIMEOUT',
         status: 504,
         account
@@ -614,8 +654,8 @@ export async function handler(event) {
       title: '서버 처리 오류',
       error: error?.message || '서버 오류가 발생했습니다.',
       reason: error?.cause?.message || '서버에서 요청을 처리하는 중 예기치 않은 오류가 발생했습니다.',
-      solution: ['잠시 후 다시 시도해 주세요.', '계속 실패하면 표시된 오류 코드와 함께 문의해 주세요.'],
-      code: error?.code || 'SERVER_ERROR',
+      solution: ['잠시 후에 다시 시도해 주세요.'],
+      code: 'SERVER_ERROR',
       status: 500,
       detail: error?.stack || '',
       account

@@ -2,7 +2,14 @@ import { json, db, getAdminSession, hashPassword } from './_common.js';
 
 const PRICING = {
   'gemini-3.1-pro-preview': { inputPerMillion: 2, outputPerMillion: 12 },
-  'gemini-3.5-flash': { inputPerMillion: 1.5, outputPerMillion: 9 }
+  'gemini-3.5-flash': { inputPerMillion: 1.5, outputPerMillion: 9 },
+  'gemini-3.6-flash': { inputPerMillion: 1.5, outputPerMillion: 7.5 },
+  'gemini-3.6-flash-pro': { inputPerMillion: 1.5, outputPerMillion: 7.5 },
+  'gemini-3.6-flash-light': { inputPerMillion: 1.5, outputPerMillion: 7.5 },
+  'gemini-3.6-flash-middle': { inputPerMillion: 1.5, outputPerMillion: 7.5 },
+  'gemini-3.6-flash-high': { inputPerMillion: 1.5, outputPerMillion: 7.5 },
+  'gemini-3.6-flash-medium': { inputPerMillion: 1.5, outputPerMillion: 7.5 },
+  'gemini-3.6-flash-low': { inputPerMillion: 1.5, outputPerMillion: 7.5 }
 };
 
 async function listAccounts() {
@@ -13,7 +20,13 @@ async function listAccounts() {
 async function listUsage() {
   const all = [];
   for (let offset = 0; offset < 100000; offset += 1000) {
-    const rows = await db(`analysis_usage?select=id,account_id,model,input_tokens,answer_tokens,thinking_tokens,output_tokens,total_tokens,estimated_cost_usd,created_at&order=created_at.desc&limit=1000&offset=${offset}`) || [];
+    let rows;
+    try {
+      rows = await db(`analysis_usage?select=id,account_id,model,input_tokens,answer_tokens,thinking_tokens,output_tokens,total_tokens,estimated_cost_usd,created_at&order=created_at.desc&limit=1000&offset=${offset}`) || [];
+    } catch (error) {
+      const legacyRows = await db(`analysis_usage?select=id,account_id,model,input_tokens,output_tokens,total_tokens,estimated_cost_usd,created_at&order=created_at.desc&limit=1000&offset=${offset}`) || [];
+      rows = legacyRows.map((row) => ({ ...row, answer_tokens: Number(row.output_tokens || 0), thinking_tokens: 0 }));
+    }
     all.push(...rows);
     if (rows.length < 1000) break;
   }
