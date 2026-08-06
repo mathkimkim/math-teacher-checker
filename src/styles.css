@@ -1047,7 +1047,7 @@ a { color: inherit; }
   right: auto;
   bottom: auto;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: .88fr .88fr .84fr 1.4fr;
   gap: 10px;
   margin: 10px 0 18px;
   padding: 0;
@@ -1060,7 +1060,8 @@ a { color: inherit; }
 }
 .compactActions .primary,
 .compactActions .ghost,
-.compactActions .reanalyzeAllErrorsButton {
+.compactActions .reanalyzeAllErrorsButton,
+.compactActions .stopAnalysisButton {
   min-width: 0;
   min-height: 29px;
   padding: 0 15px;
@@ -1069,6 +1070,7 @@ a { color: inherit; }
   font-weight: 900;
   box-shadow: none;
 }
+.compactActions button span { white-space: nowrap; }
 .compactActions .primary {
   display: inline-flex;
   align-items: center;
@@ -1789,6 +1791,23 @@ a { color: inherit; }
 .studentNameActions { grid-column: 2; grid-row: 1 / span 2; display: flex; gap: 7px; }
 .studentNameActions button { min-height: 45px; padding: 0 14px; border-radius: 12px; color: #fff; background: var(--brand); cursor: pointer; font-size: 15px; font-weight: 950; }
 .studentNameActions .allStudentRecordsButton { color: #176b4d; border: 1px solid #a9ddc3; background: #effaf5; }
+.splitPhotoButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 31px;
+  padding: 0 11px;
+  border: 1px solid #a9ddc3;
+  border-radius: 10px;
+  color: #176b4d;
+  background: linear-gradient(180deg, #f3fcf8 0%, #e8f8f0 100%);
+  box-shadow: 0 3px 8px rgba(23,107,77,.10);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 950;
+}
+.splitPhotoButton svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.splitPhotoButton:disabled { cursor: not-allowed; opacity: .45; }
 .studentResultIdentity {
   min-width: 150px;
   display: flex !important;
@@ -1991,9 +2010,6 @@ a { color: inherit; }
 @media (max-width: 820px) {
   .compactActions { gap: 6px; }
   .compactActions .primary, .compactActions .ghost, .compactActions .reanalyzeAllErrorsButton, .stopAnalysisButton { min-width: 0; padding: 0 10px; font-size: 15px; }
-  .compactActions .primary { flex: 1.15; }
-  .stopAnalysisButton { flex: 1; }
-  .compactActions .ghost { flex: .9; }
 }
 
 @media (max-width: 760px) {
@@ -2012,26 +2028,30 @@ a { color: inherit; }
 }
 
 @media (max-width: 480px) {
-  .studentNameEntry { grid-template-columns: 1fr; padding: 13px; }
-  .studentNameEntry small { grid-column: 1; }
-  .studentNameActions { grid-column: 1; grid-row: auto; display: grid; grid-template-columns: 1fr 1fr; }
+  .studentNameEntry { grid-template-columns: minmax(100px, 1fr) auto; align-items: end; gap: 7px; padding: 11px; }
+  .studentNameEntry label span { margin-bottom: 4px; font-size: 13px; }
+  .studentNameEntry input { min-height: 39px; padding: 0 9px; font-size: 14px; }
+  .studentNameEntry small { grid-column: 1 / -1; grid-row: 2; font-size: 12px; }
+  .studentNameActions { grid-column: 2; grid-row: 1; display: flex; flex-wrap: nowrap; gap: 4px; }
+  .studentNameActions button { min-height: 39px; padding: 0 7px; font-size: 11px; white-space: nowrap; }
+  .studentNameActions button:not(.allStudentRecordsButton) { display: none; }
   .studentRecordsDialog { padding: 18px; border-radius: 20px; }
-  .studentNameActions { grid-template-columns:1fr; }
   .submissionGrid{grid-template-columns:1fr}.accessStudentHead{align-items:flex-start;flex-wrap:wrap}.studentAccessDialog{padding:16px}.studentCreateRow{display:grid}.studentItemList>article{grid-template-columns:1fr}.studentItemList>article>img{width:100%;height:240px}
   .teacherSubmissionDay{padding:14px;border-radius:18px}.teacherSubmissionDay>header{top:-14px;margin:-14px -14px 13px;padding:14px}.teacherSubmissionStream>article{padding:11px}.teacherSubmissionPhoto img{max-height:460px}
   .weeklyComparisonTable > div { grid-template-columns: 1.15fr .8fr .8fr .8fr; padding: 0 7px; }
-  .compactActions { gap: 4px; }
+  .compactActions { grid-template-columns: .82fr .82fr .8fr 1.5fr; gap: 3px; }
   .compactActions .primary,
   .compactActions .ghost,
   .compactActions .reanalyzeAllErrorsButton,
   .stopAnalysisButton {
     min-height: 38px;
-    padding: 0 5px;
-    font-size: 13px;
+    padding: 0 3px;
+    font-size: 11px;
   }
   .compactActions .actionIcon,
   .compactActions .actionArrow,
   .stopSquare { display: none; }
+  .splitPhotoButton { min-height: 29px; padding: 0 8px; font-size: 12px; }
   .footerSupportButtons { gap: 7px; }
   .footerSupportButtons a,
   .footerSupportButtons button { min-height: 46px; font-size: 16px; }

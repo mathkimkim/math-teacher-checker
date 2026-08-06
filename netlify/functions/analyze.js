@@ -406,7 +406,7 @@ export async function handler(event) {
   }
   const [, imageMimeType, imageBase64] = imageMatch;
 
-  const requestedMode = String(payload.analysisMode || 'GENERAL').toUpperCase();
+  const requestedMode = String(payload.analysisMode || 'ADVANCED').toUpperCase();
   const isAdvanced = requestedMode === 'ADVANCED';
   const isMiddle = requestedMode === 'MIDDLE';
   const analysisMode = isAdvanced ? 'ADVANCED' : (isMiddle ? 'MIDDLE' : 'GENERAL');
