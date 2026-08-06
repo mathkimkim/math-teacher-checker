@@ -843,19 +843,6 @@ function StudentSummaryDialog({ studentName, summary, weeklyRecords, weeklyLoadi
     return improved ? 'improved' : 'declined';
   }
 
-  const reportLines = [];
-  if (lastWeek.total) {
-    const rateDiff = thisWeek.correctRate - lastWeek.correctRate;
-    reportLines.push(`이번 주에는 총 ${thisWeek.total}문제를 분석했으며 정답률은 ${thisWeek.correctRate}%입니다.`);
-    reportLines.push(`지난주보다 정답률이 ${Math.abs(rateDiff).toFixed(1)}%p ${rateDiff > 0 ? '상승했습니다' : rateDiff < 0 ? '하락했습니다' : '유지되었습니다'}.`);
-    const errorDiff = (thisWeek.calculation + thisWeek.concept) - (lastWeek.calculation + lastWeek.concept);
-    reportLines.push(errorDiff < 0 ? '풀이 과정에서 나타난 오류도 지난주보다 줄어들었습니다.' : errorDiff > 0 ? '반복되는 오류 유형을 중심으로 다시 점검하겠습니다.' : '전체 오류 횟수는 지난주와 같습니다.');
-  } else {
-    reportLines.push(`이번 주에는 총 ${thisWeek.total}문제를 분석했습니다.`);
-    reportLines.push('다음 주부터 지난주와 비교한 변화도 함께 안내드리겠습니다.');
-  }
-  reportLines.push('단순히 정답만 확인하지 않고 풀이 과정까지 꼼꼼하게 확인하겠습니다.');
-
   useEffect(() => {
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') onClose();
@@ -873,9 +860,7 @@ function StudentSummaryDialog({ studentName, summary, weeklyRecords, weeklyLoadi
     '',
     '오류 유형(지난주 → 이번 주)',
     `계산오류: ${lastWeek.calculation}개 → ${thisWeek.calculation}개`,
-    `개념오류: ${lastWeek.concept}개 → ${thisWeek.concept}개`,
-    '',
-    ...reportLines
+    `개념오류: ${lastWeek.concept}개 → ${thisWeek.concept}개`
   ].join('\n');
 
   async function copyShareText(message) {
@@ -931,7 +916,6 @@ function StudentSummaryDialog({ studentName, summary, weeklyRecords, weeklyLoadi
               <div><span>계산오류</span><b>{lastWeek.calculation}</b><b>{thisWeek.calculation}</b><em className={deltaClass('calculation')}>{delta('calculation')}</em></div>
               <div><span>개념오류</span><b>{lastWeek.concept}</b><b>{thisWeek.concept}</b><em className={deltaClass('concept')}>{delta('concept')}</em></div>
             </div>
-            <div className="weeklyParentReport"><strong>학부모님께 드리는 주간 리포트</strong>{reportLines.map((line) => <p key={line}>{line}</p>)}</div>
           </>
         )}
         <button type="button" className="studentShareButton" onClick={share}>
@@ -1021,7 +1005,7 @@ function StudentApp() {
     if(busy)return;
     try{
       const halves=await splitImage(item.file,direction,position);
-      const replacement=halves.map((file,index)=>({id:`${Date.now()}-${index}-${file.name}`,file,name:file.name,preview:URL.createObjectURL(file),status:'ready',result:null,error:null}));
+      const replacement=halves.map((file,index)=>({id:`${Date.now()}-${index}-${file.name}`,file,name:file.name,preview:URL.createObjectURL(file),status:'ready',result:null,error:null,splitFromError:item.status==='error'}));
       setItems(previous=>previous.flatMap(current=>{
         if(current.id!==item.id)return [current];
         if(current.preview)URL.revokeObjectURL(current.preview);
@@ -1067,7 +1051,7 @@ function StudentApp() {
   }
   async function retry(item){if(busy)return;setBusy(true);await analyzeOneStudent(item);setBusy(false);}
   if(!token||!student)return <main className="studentPortal"><section className="studentLoginCard"><div className="brandMark">✓</div><span>풀이체커 학생용</span><h1>내 풀이 촬영하기</h1><p>선생님에게 받은 6자리 접속코드를 입력하세요.</p><form onSubmit={login}><input inputMode="numeric" maxLength="6" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} placeholder="6자리 접속코드"/>{error?<div className="authAlert error">{error}</div>:null}<button>시작하기</button></form></section></main>;
-  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='ADVANCED'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('ADVANCED')}>HIGH</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>AI가 풀이를 확인하고 있어요...</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
+  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='ADVANCED'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('ADVANCED')}>HIGH</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>AI가 풀이를 확인하고 있어요...</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.splitFromError&&item.status==='ready'?<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
 }
 
 function ImageLightbox({ src, alt, onClose }) {
@@ -1442,7 +1426,8 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
         status: 'ready',
         result: null,
         error: null,
-        edited: true
+        edited: true,
+        splitFromError: item.status === 'error'
       };
     }));
     setEditTargetId(null);
@@ -1590,7 +1575,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   }
 
   async function reanalyzeItem(item) {
-    if (!item || busy || (!item.result && item.status !== 'error')) return;
+    if (!item || busy || (!item.result && item.status !== 'error' && !item.splitFromError)) return;
     if (!auth) {
       setLoginMode('login');
       return;
@@ -1763,9 +1748,6 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   const reviewProblems = allAnalyzedProblems.filter((problem) => problem?.verdict === '확인 필요').length;
   const calculationErrors = allAnalyzedProblems.filter((problem) => problem?.verdict === '틀림' && problem?.errorType === '계산오류').length;
   const conceptErrors = allAnalyzedProblems.filter((problem) => problem?.verdict === '틀림' && problem?.errorType === '개념오류').length;
-  const totalAnalysisCost = items.reduce((sum, item) => (
-    sum + Math.max(0, Number(item.result?.usage?.estimatedCostUsd || 0))
-  ), 0);
   const studentSummary = {
     total: analyzedProblems,
     correct: correctProblems,
@@ -1949,7 +1931,6 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
           </label>
           <small>{saveState === 'saving' ? '저장 중...' : saveState === 'saved' ? '자동 저장됨' : saveState === 'error' ? '저장 실패 · 잠시 후 다시 시도됩니다' : '분석 전에 학생 이름을 입력해 주세요.'}</small>
           <div className="studentNameActions">
-            {analyzedProblems > 0 && normalizeStudentName(studentName) ? <button type="button" onClick={openStudentSummary}>상세분석 ›</button> : null}
             <button type="button" className="allStudentRecordsButton" onClick={openStudentRecords}>전체 학생 기록</button>
             <button type="button" className="allStudentRecordsButton" onClick={() => auth ? setShowStudentAccess(true) : setLoginMode('login')}>학생 접속 관리</button>
           </div>
@@ -1962,10 +1943,12 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
               <span>
                 총 <b>{analyzedProblems.toLocaleString()}</b>문제 중
                 틀림 <em>{incorrectProblems.toLocaleString()}</em>문제 ·
-                확인 필요 <i>{reviewProblems.toLocaleString()}</i>문제 ·
-                총 비용 <b>{formatUsd(totalAnalysisCost)}</b>
+                확인 필요 <i>{reviewProblems.toLocaleString()}</i>문제
               </span>
             </div>
+            {normalizeStudentName(studentName) ? (
+              <button type="button" className="studentDetailButton" onClick={openStudentSummary}>상세보기</button>
+            ) : null}
             <button
               type="button"
               className={`hideCorrectButton ${hideCorrect ? 'active' : ''}`}
@@ -2044,7 +2027,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
                     <strong>학생 풀이 {idx + 1}</strong>
                   </div>
                   <div className="cardTools">
-                    {(item.result || item.status === 'error') ? (
+                    {(item.result || item.status === 'error' || item.splitFromError) ? (
                       <button className="reanalyzeLinkBtn" disabled={busy} onClick={() => reanalyzeItem(item)}>
                         {item.status === 'compressing' || item.status === 'analyzing' || item.status === 'retrying' ? '재분석 중...' : '재분석'}
                       </button>
@@ -2054,12 +2037,6 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
                   </div>
                 </div>
                 <p className="meta">{item.name} · {formatBytes(item.size)}{item.edited ? ' · 편집 적용됨' : ''}</p>
-                {item.result?.usage ? (
-                  <div className="photoTokenUsage">
-                    입력 {Number(item.result.usage.inputTokens || 0).toLocaleString()} · 일반출력 {Number(item.result.usage.answerTokens || 0).toLocaleString()} · 추론 {Number(item.result.usage.thinkingTokens || 0).toLocaleString()} · 총 {Number(item.result.usage.totalTokens || 0).toLocaleString()}토큰 · {formatUsd(item.result.usage.estimatedCostUsd)}
-                  </div>
-                ) : null}
-
                 {item.status === 'ready' && <p className="muted">분석할 준비가 됐어요.</p>}
                 {item.status === 'compressing' && <p className="muted loadingText">이미지 전송 준비 중...</p>}
                 {item.status === 'analyzing' && <p className="muted loadingText">AI가 풀이를 검산하고 있어요...</p>}
