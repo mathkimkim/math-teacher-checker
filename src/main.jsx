@@ -343,6 +343,16 @@ function statusLabel(status) {
   }
 }
 
+function analysisStageText(stage) {
+  switch (stage) {
+    case 'CONNECTED': return '분석 서버에 연결했어요...';
+    case 'AI_ANALYZING': return 'AI가 풀이를 분석하고 있어요...';
+    case 'AI_RESPONSE_STREAMING': return 'AI 분석 결과를 받고 있어요...';
+    case 'RESULT_ORGANIZING': return '분석 결과를 정리하고 있어요...';
+    default: return 'AI가 풀이를 확인하고 있어요...';
+  }
+}
+
 function getVerdictClass(verdict) {
   if (verdict === '맞음') return 'ok';
   if (verdict === '틀림') return 'bad';
@@ -512,8 +522,109 @@ function normalizeErrorPayload(data, status) {
     solutions: statusSolutions.length ? statusSolutions : ['잠시 후 같은 사진으로 다시 시도해 주세요.'],
     code: data?.code || 'UNKNOWN_ERROR',
     status,
-    detail: data?.detail || data?.preview || ''
+    detail: data?.detail || data?.preview || '',
+    errorSource: data?.errorSource || '',
+    responseContentType: data?.responseContentType || '',
+    responseBody: data?.responseBody || '',
+    requestId: data?.requestId || '',
+    elapsedMs: Math.max(0, Number(data?.elapsedMs) || 0)
   };
+}
+
+async function readAnalysisResponse(response, startedAt, onProgress = () => {}) {
+  const responseContentType = response.headers.get('content-type') || '';
+  const requestId = response.headers.get('x-nf-request-id') || response.headers.get('x-request-id') || '';
+  let rawText = '';
+  let data;
+
+  if (responseContentType.includes('text/event-stream') && response.body) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let finalEvent = null;
+    const consumeLines = (flush = false) => {
+      const lines = buffer.split(/\r?\n/);
+      buffer = flush ? '' : (lines.pop() || '');
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload) continue;
+        const event = JSON.parse(payload);
+        if (event?.type === 'progress') onProgress(event.stage || 'AI_ANALYZING');
+        if (event?.type === 'result') finalEvent = event;
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const text = decoder.decode(value, { stream: true });
+      rawText += text;
+      buffer += text;
+      consumeLines(false);
+    }
+    const tail = decoder.decode();
+    rawText += tail;
+    buffer += tail;
+    consumeLines(true);
+
+    if (finalEvent) {
+      return {
+        ...(finalEvent.data || {}),
+        _httpStatus: Math.max(100, Number(finalEvent.status) || 500)
+      };
+    }
+    return {
+      title: '분석 스트림 연결 종료',
+      reason: '최종 분석 결과가 도착하기 전에 스트림 연결이 종료되었습니다.',
+      solution: ['사진을 나눈 뒤 다시 분석해 주세요.'],
+      code: 'STREAM_INTERRUPTED',
+      status: 504,
+      _httpStatus: 504,
+      errorSource: 'NETLIFY',
+      responseContentType,
+      responseBody: rawText.slice(0, 2000),
+      requestId,
+      elapsedMs: Math.max(0, Date.now() - startedAt)
+    };
+  } else {
+    rawText = await response.text();
+  }
+
+  try {
+    if (!rawText) throw new Error('EMPTY_RESPONSE_BODY');
+    data = JSON.parse(rawText);
+  } catch {
+    const gatewayTimeout = response.status === 504;
+    data = {
+      title: gatewayTimeout ? 'Netlify 게이트웨이 시간 초과' : '오류 응답 해석 실패',
+      reason: gatewayTimeout
+        ? '분석 함수가 완료되기 전에 Netlify 게이트웨이가 연결을 종료했습니다.'
+        : '서버가 JSON이 아닌 오류 응답을 반환했습니다.',
+      solution: gatewayTimeout
+        ? ['사진을 나눈 뒤 다시 분석해 주세요.']
+        : ['잠시 후 다시 분석해 주세요.'],
+      code: gatewayTimeout ? 'NETLIFY_GATEWAY_TIMEOUT' : 'INVALID_ERROR_RESPONSE',
+      status: response.status,
+      errorSource: gatewayTimeout ? 'NETLIFY' : 'UNKNOWN',
+      responseContentType,
+      responseBody: rawText.slice(0, 2000),
+      requestId,
+      elapsedMs: Math.max(0, Date.now() - startedAt)
+    };
+  }
+
+  if (!response.ok) {
+    data = {
+      ...data,
+      status: Number(data?.status) || response.status,
+      responseContentType: data?.responseContentType || responseContentType,
+      requestId: data?.requestId || requestId,
+      elapsedMs: Math.max(0, Number(data?.elapsedMs) || (Date.now() - startedAt))
+    };
+  }
+
+  return data;
 }
 
 function AnalysisErrorCard({ error }) {
@@ -1021,9 +1132,11 @@ function StudentApp() {
       let res;
       let data;
       for(let attempt=0;attempt<2;attempt+=1){
+        const requestStartedAt=Date.now();
         res=await fetch('/.netlify/functions/analyze',{method:'POST',headers:apiHeaders(token),body:JSON.stringify({imageDataUrl,fileName:item.name,analysisMode:selectedMode})});
-        data=await res.json().catch(()=>({}));
-        const retryable=[500,503].includes(res.status);
+        data=await readAnalysisResponse(res,requestStartedAt,(stage)=>setItems(p=>p.map(x=>x.id===item.id?{...x,analysisStage:stage}:x)));
+        const responseStatus=Number(data?._httpStatus)||res.status;
+        const retryable=[500,503].includes(responseStatus);
         const remaining=data?.account?Math.max(0,Number(data.account.limit_count||0)-Number(data.account.used_count||0)):1;
         if(attempt===0&&retryable&&remaining>0){
           setItems(p=>p.map(x=>x.id===item.id?{...x,status:'retrying'}:x));
@@ -1033,7 +1146,8 @@ function StudentApp() {
         }
         break;
       }
-      if(!res.ok)throw normalizeErrorPayload(data,res.status);
+      const finalStatus=Number(data?._httpStatus)||res.status;
+      if(finalStatus>=400)throw normalizeErrorPayload(data,finalStatus);
       await apiRequest('student-access',{method:'POST',token,body:{recordId:item.id,fileName:item.name,imageDataUrl,problems:data.problems||[]}});
       setItems(p=>p.map(x=>x.id===item.id?{...x,status:'done',result:null,error:null}:x));
     }catch(e){setItems(p=>p.map(x=>x.id===item.id?{...x,status:'error',result:null,error:e}:x));}
@@ -1045,13 +1159,13 @@ function StudentApp() {
     const queue=items.filter(x=>x.status==='ready'||x.status==='error');
     let nextIndex=0;
     async function worker(){while(nextIndex<queue.length){const item=queue[nextIndex];nextIndex+=1;await analyzeOneStudent(item,selectedMode);}}
-    const workerCount=Math.min(3,queue.length);
+    const workerCount=Math.min(2,queue.length);
     await Promise.all(Array.from({length:workerCount},()=>worker()));
     setBusy(false);
   }
   async function retry(item){if(busy)return;setBusy(true);await analyzeOneStudent(item);setBusy(false);}
   if(!token||!student)return <main className="studentPortal"><section className="studentLoginCard"><div className="brandMark">✓</div><span>풀이체커 학생용</span><h1>내 풀이 촬영하기</h1><p>선생님에게 받은 6자리 접속코드를 입력하세요.</p><form onSubmit={login}><input inputMode="numeric" maxLength="6" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} placeholder="6자리 접속코드"/>{error?<div className="authAlert error">{error}</div>:null}<button>시작하기</button></form></section></main>;
-  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='ADVANCED'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('ADVANCED')}>HIGH</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>AI가 풀이를 확인하고 있어요...</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.splitFromError&&item.status==='ready'?<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
+  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='ADVANCED'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('ADVANCED')}>HIGH</button><button className={analysisMode==='MIDDLE'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('MIDDLE')}>MED</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>{analysisStageText(item.analysisStage)}</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.splitFromError&&item.status==='ready'?<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
 }
 
 function ImageLightbox({ src, alt, onClose }) {
@@ -1187,7 +1301,7 @@ function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect, readOnly = fal
     : allProblems.map((problem, originalIndex) => ({ problem, originalIndex }));
 
   if (!problems.length) {
-    return <div className="errorBox small">{hideCorrect ? '틀림·확인 필요 문제가 없습니다.' : '분석 결과를 표시하지 못했습니다.'}</div>;
+    return <div className="errorBox small">{hideCorrect ? '틀림·확인 필요 문제가 없습니다.' : '학생이 작성한 풀이가 없습니다.'}</div>;
   }
 
   return (
@@ -1526,16 +1640,20 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const controller = new AbortController();
         requestControllersRef.current.set(item.id, controller);
+        const requestStartedAt = Date.now();
         res = await fetch('/.netlify/functions/analyze', {
           method: 'POST',
           headers: apiHeaders(sessionToken),
           signal: controller.signal,
           body: JSON.stringify({ imageDataUrl, fileName: item.name, analysisMode: selectedMode })
         });
-        data = await res.json().catch(() => ({}));
+        data = await readAnalysisResponse(res, requestStartedAt, (stage) => {
+          setItems((prev) => prev.map((x) => x.id === item.id ? { ...x, analysisStage: stage } : x));
+        });
         if (data?.account) onAccountUpdate(data.account);
 
-        const retryable = [500, 503].includes(res.status);
+        const responseStatus = Number(data?._httpStatus) || res.status;
+        const retryable = [500, 503].includes(responseStatus);
         const remainingAfterAttempt = data?.account
           ? Math.max(0, Number(data.account.limit_count || 0) - Number(data.account.used_count || 0))
           : 1;
@@ -1552,8 +1670,9 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
       requestControllersRef.current.delete(item.id);
     }
 
-    if (!res.ok) {
-      throw normalizeErrorPayload(data, res.status);
+    const finalStatus = Number(data?._httpStatus) || res.status;
+    if (finalStatus >= 400) {
+      throw normalizeErrorPayload(data, finalStatus);
     }
     return data;
   }
@@ -1566,7 +1685,12 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
         body: JSON.stringify({
           httpStatus: Number(error?.status) || 500,
           errorCode: String(error?.code || 'UNKNOWN_ERROR'),
-          errorType: String(error?.title || '분석 실패')
+          errorType: String(error?.title || '분석 실패'),
+          errorSource: String(error?.errorSource || ''),
+          responseContentType: String(error?.responseContentType || ''),
+          responseBody: String(error?.responseBody || error?.detail || ''),
+          requestId: String(error?.requestId || ''),
+          elapsedMs: Math.max(0, Number(error?.elapsedMs) || 0)
         })
       });
     } catch {
@@ -1658,7 +1782,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
     }
 
     try {
-      const workerCount = Math.min(3, queue.length);
+      const workerCount = Math.min(2, queue.length);
       await Promise.all(Array.from({ length: workerCount }, () => worker()));
     } finally {
       setAnalysisElapsedSeconds((prev) => prev + ((performance.now() - startedAt) / 1000));
@@ -1861,6 +1985,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
         <div className="topbarActions">
           <div className="modelModeToggle" aria-label="분석 모델 선택">
             <button type="button" className={analysisMode === 'ADVANCED' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('ADVANCED')}>HIGH</button>
+            <button type="button" className={analysisMode === 'MIDDLE' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('MIDDLE')}>MED</button>
             <button type="button" className={analysisMode === 'GENERAL' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('GENERAL')}>LOW</button>
           </div>
           <span className="analysisTimeBadge">분석시간 <b>{formatAnalysisSeconds(analysisElapsedSeconds)}</b></span>
@@ -2039,7 +2164,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
                 <p className="meta">{item.name} · {formatBytes(item.size)}{item.edited ? ' · 편집 적용됨' : ''}</p>
                 {item.status === 'ready' && <p className="muted">분석할 준비가 됐어요.</p>}
                 {item.status === 'compressing' && <p className="muted loadingText">이미지 전송 준비 중...</p>}
-                {item.status === 'analyzing' && <p className="muted loadingText">AI가 풀이를 검산하고 있어요...</p>}
+                {item.status === 'analyzing' && <p className="muted loadingText">{analysisStageText(item.analysisStage)}</p>}
                 {item.status === 'retrying' && <p className="muted loadingText">일시 오류로 5초 후 자동 재시도 중입니다...</p>}
                 {item.status === 'error' && <AnalysisErrorCard error={item.error} />}
                 {item.result && <ResultCard
@@ -2293,15 +2418,18 @@ function AdminApp({ token, onLogout }) {
           {Object.entries(errorTypeCounts).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([type, count]) => <span key={type}>{type} · {count}회</span>)}
         </div>
         <div className="adminErrorTableWrap">
-          <table className="adminErrorTable"><thead><tr><th>발생 시각</th><th>계정</th><th>오류번호</th><th>오류 코드</th><th>종류</th></tr></thead><tbody>
+          <table className="adminErrorTable"><thead><tr><th>발생 시각</th><th>계정</th><th>오류번호</th><th>오류 코드</th><th>출처</th><th>소요시간</th><th>응답 형식</th><th>종류·응답</th></tr></thead><tbody>
             {analysisErrors.slice(0, 200).map((row) => <tr key={row.id}>
               <td>{new Date(row.created_at).toLocaleString('ko-KR')}</td>
               <td>{accountNameById[row.account_id] || '삭제된 계정'}</td>
               <td>{row.http_status || 500}</td>
               <td>{row.error_code || 'UNKNOWN_ERROR'}</td>
-              <td>{row.error_type || '분석 실패'}</td>
+              <td>{row.error_source || 'UNKNOWN'}</td>
+              <td>{row.elapsed_ms ? `${(Number(row.elapsed_ms) / 1000).toFixed(1)}초` : '-'}</td>
+              <td title={row.request_id ? `요청 ID: ${row.request_id}` : ''}>{row.response_content_type || '-'}</td>
+              <td title={row.response_body || ''}>{row.error_type || '분석 실패'}{row.response_body ? ' · 응답 내용 확인' : ''}</td>
             </tr>)}
-            {!analysisErrors.length ? <tr><td colSpan="5">기록된 오류가 없습니다.</td></tr> : null}
+            {!analysisErrors.length ? <tr><td colSpan="8">기록된 오류가 없습니다.</td></tr> : null}
           </tbody></table>
         </div>
       </section>

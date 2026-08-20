@@ -35,10 +35,14 @@ async function listUsage() {
 
 async function listAnalysisErrors() {
   try {
-    return await db('analysis_errors?select=id,account_id,http_status,error_code,error_type,created_at&order=created_at.desc&limit=1000') || [];
+    return await db('analysis_errors?select=id,account_id,http_status,error_code,error_type,error_source,response_content_type,response_body,request_id,elapsed_ms,created_at&order=created_at.desc&limit=1000') || [];
   } catch (error) {
-    console.error('ANALYSIS_ERROR_LIST_FAILED', error);
-    return [];
+    try {
+      return await db('analysis_errors?select=id,account_id,http_status,error_code,error_type,created_at&order=created_at.desc&limit=1000') || [];
+    } catch (fallbackError) {
+      console.error('ANALYSIS_ERROR_LIST_FAILED', fallbackError);
+      return [];
+    }
   }
 }
 

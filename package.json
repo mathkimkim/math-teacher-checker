@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "2.17.1",
     "@supabase/supabase-js": "^2.49.0",
     "@vitejs/plugin-react": "latest",
     "cropperjs": "^1.6.2",

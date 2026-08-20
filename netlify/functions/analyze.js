@@ -1,13 +1,14 @@
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' };
 
 import { getSessionAccount, getStudentSession, db, publicAccount } from './_common.js';
+import { GoogleGenAI } from '@google/genai';
 
 function json(statusCode, body) {
   return { statusCode, headers: JSON_HEADERS, body: JSON.stringify(body) };
 }
 
 
-function errorBody({ title, error, reason, solution, code, status, detail = '', account = null }) {
+function errorBody({ title, error, reason, solution, code, status, detail = '', account = null, errorSource = '', responseContentType = '', responseBody = '', requestId = '', elapsedMs = 0 }) {
   return {
     title,
     error: error || title,
@@ -16,6 +17,11 @@ function errorBody({ title, error, reason, solution, code, status, detail = '', 
     code,
     status,
     detail,
+    errorSource,
+    responseContentType,
+    responseBody,
+    requestId,
+    elapsedMs,
     account: publicAccount(account)
   };
 }
@@ -27,6 +33,42 @@ function getOutputText(data) {
     .filter(Boolean)
     .join('\n')
     .trim();
+}
+
+async function readGeminiSdkStream(responseStream, onProgress = () => {}) {
+  let outputText = '';
+  let usageMetadata = {};
+  let finishReason = '';
+  let raw = '';
+  let receivedFirstChunk = false;
+
+  for await (const chunk of responseStream) {
+    const text = typeof chunk?.text === 'string' ? chunk.text : getOutputText(chunk);
+    if (text) outputText += text;
+    if (chunk?.usageMetadata) usageMetadata = chunk.usageMetadata;
+    const candidate = chunk?.candidates?.[0];
+    if (candidate?.finishReason) finishReason = candidate.finishReason;
+    try {
+      raw += `${JSON.stringify(chunk)}\n`;
+    } catch {
+      raw += '[UNSERIALIZABLE_STREAM_CHUNK]\n';
+    }
+    if (!receivedFirstChunk) {
+      receivedFirstChunk = true;
+      onProgress('AI_RESPONSE_STREAMING');
+    }
+  }
+
+  return {
+    raw,
+    data: {
+      candidates: [{
+        content: { parts: [{ text: outputText }] },
+        finishReason
+      }],
+      usageMetadata
+    }
+  };
 }
 
 function extractJson(text) {
@@ -74,27 +116,42 @@ const resultSchema = {
   properties: {
     problems: {
       type: 'array',
-      minItems: 1,
+      minItems: 0,
       items: problemSchema
     }
   },
   required: ['problems']
 };
 
-const systemPrompt = String.raw`너는 학생이 작성한 수학 풀이 과정의 줄간 연산 오류만 검증하는 대수학 검증기다.
+const systemPrompt = String.raw`너는 사진 속 원본 문제와 학생이 작성한 풀이를 구분하여 검증하는 수학 풀이 검증기다.
 
-원본 문제와 정답은 제공되지 않는다. 원래 문제의 조건, 정답, 출제 의도를 추측하지 말고 학생이 작성한 풀이 내부의 식만 검증하라.
+원본 문제는 학생 풀이와 같은 사진에 인쇄되어 있을 수도 있고, 보이지 않을 수도 있다. 사진에 실제로 보이는 정보만 사용하고 보이지 않는 문제 조건, 정답, 출제 의도는 추측하지 마라.
+
+[원본 문제 사용 규칙]
+
+1. 원본 문제가 사진에 명확하게 보이면 문제의 조건, 요구사항, 정의역과 제한조건을 읽고 학생의 풀이 과정과 최종 답이 모두 원본 문제에 맞는지 검증하라.
+2. 원본 문제를 이용할 때는 사진에서 직접 확인되는 조건만 사용하라. 잘리거나 흐려서 읽을 수 없는 조건을 임의로 복원하거나 만들어내지 마라.
+3. 원본 문제가 없거나 충분히 읽을 수 없으면 최종 답의 정오를 추측하지 말고, 학생이 작성한 풀이 내부의 줄간 계산과 식 변형만 검증하라.
+4. 인쇄된 문제 지문, 보기, 공식, 그래프와 수식을 학생이 작성한 풀이로 착각하지 마라. 학생의 필기, 답 표시 또는 풀이 흔적과 명확하게 구분하라.
+5. 원본 문제가 보이면 조건 누락, 정의역 위반, 무연근, 문제에서 요구한 답의 형태, 최종 답의 누락이나 불일치도 검증 대상에 포함하라.
+
+[풀이 없음·답만 작성된 문제]
+
+1. 학생이 작성한 식, 답 또는 풀이 흔적이 전혀 없는 문제는 problems 배열에 포함하지 마라. 인쇄된 문제 지문이나 수식만 보고 verdict="맞음"으로 판정하지 마라.
+2. 학생이 답만 작성했고 그 답이 틀렸으며 원본 문제로 올바른 답을 확실히 검산할 수 있으면 verdict="틀림"으로 판정하고 학생 답과 올바른 답을 증거 필드에 작성하라.
+3. 학생이 답만 작성했고 답은 맞지만 풀이 과정이 없거나, 원본 문제를 읽을 수 없어 답을 검산할 수 없으면 verdict="확인 필요", message="풀이 과정이 없어 검산할 수 없습니다."로 반환하라.
+4. 학생이 작성한 풀이가 실제로 존재하고, 원본 문제의 조건과 풀이 과정 및 최종 답에서 수학적 오류가 발견되지 않을 때만 verdict="맞음"으로 판정하라.
 
 [핵심 검증 규칙]
 
 1. (줄간 등가성 최우선)
-이전 줄과 다음 줄 또는 등호의 좌변과 우변이 대수적으로 완전히 동치이고, 두 식의 차 A-B를 정리한 결과가 0이라면 반드시 verdict="맞음"으로 판정하라.
+이전 줄과 다음 줄 또는 등호의 좌변과 우변이 대수적으로 완전히 동치이고, 두 식의 차 A-B를 정리한 결과가 0이라면 해당 줄간 변형 자체를 오류로 판정하지 마라. 다만 원본 문제의 조건 위반, 다른 줄의 오류 또는 최종 답의 불일치가 있으면 전체 verdict는 그 오류에 따라 판정하라.
 
 2. (변형 인정)
 전개, 이항, 통분, 약분, 인수분해, 유리화 등 수학적으로 유효한 변형은 모두 올바른 풀이로 인정하라. 표기 방식이나 항의 순서가 다르다는 이유로 틀림 처리하지 마라.
 
 3. (환각 금지)
-눈으로 명확하게 확인되고 직접 검산할 수 있는 연산 또는 부호 실수만 verdict="틀림"으로 처리하라. 확실하지 않으면 오류를 추측하거나 만들어내지 말고 verdict="확인 필요"로 처리하라.
+눈으로 명확하게 확인되고 직접 검산할 수 있는 연산·부호 실수, 원본 문제의 조건 위반 또는 최종 답의 불일치만 verdict="틀림"으로 처리하라. 확실하지 않으면 오류를 추측하거나 만들어내지 말고 verdict="확인 필요"로 처리하라.
 
 4. (오답 판정 증거 제출)
 verdict="틀림"을 반환하려면 studentExpression, correctExpression, difference를 모두 반드시 작성하라.
@@ -121,7 +178,7 @@ verdict="틀림"일 때만 errorType을 분류하라.
 verdict가 "맞음", "확인 필요", "판독 불가"이면 errorType은 반드시 빈 문자열로 반환하라.
 
 반환 규칙:
-1. 문제가 없으면 verdict="맞음", message="맞음"으로 하고 studentExpression, correctExpression, difference는 모두 빈 문자열로 한다.
+1. 학생이 작성한 풀이가 존재하고 원본 문제의 조건, 풀이 과정 및 최종 답에서 오류가 발견되지 않으면 verdict="맞음", message="맞음"으로 하고 studentExpression, correctExpression, difference는 모두 빈 문자열로 한다.
 2. 문제가 있으면 verdict="틀림"으로 하고 최초 오류 한 곳만 반환한다.
 3. verdict="틀림"일 때 studentExpression, correctExpression, difference 중 하나라도 정확히 작성할 수 없으면 verdict="확인 필요"로 바꾼다.
 4. message에는 해당 식이 왜 틀렸는지만 한국어 한 문장으로 간단히 쓴다.
@@ -142,9 +199,9 @@ verdict가 "맞음", "확인 필요", "판독 불가"이면 errorType은 반드�
 - difference: "학생식은 -10b, 올바른 식은 +10b"
 - message: "제곱식을 전개할 때 일차항의 부호를 반대로 계산했습니다."
 
-원래 문제의 정답, 모범풀이, 첫 오류 이후의 연쇄 오류, 긴 설명은 작성하지 않는다.
+사진에 원본 문제가 없거나 읽을 수 없을 때는 원래 문제의 정답, 모범풀이, 첫 오류 이후의 연쇄 오류, 긴 설명을 작성하지 않는다.
 불확실하면 verdict="확인 필요", 읽을 수 없으면 verdict="판독 불가"로 하고 세 증거 필드를 모두 빈 문자열로 한다.
-사진에 풀이가 있는 모든 문제를 빠짐없이 반환한다.`;
+사진에서 학생이 실제로 풀이 또는 답을 작성한 모든 문제만 빠짐없이 반환한다. 학생의 필기나 답이 전혀 없는 문제는 반환하지 않는다.`;
 
 
 const LATEX_COMMANDS = [
@@ -370,7 +427,7 @@ async function addTokenUsageToAccount(accountId, usage) {
   throw new Error('입력·출력·누적 토큰을 갱신하지 못했습니다.');
 }
 
-export async function handler(event) {
+async function runAnalysis(event, onProgress = () => {}) {
   if (event.httpMethod !== 'POST') {
     return json(405, errorBody({ title: '요청 방식 오류', reason: '이 기능은 POST 요청만 지원합니다.', solution: ['페이지를 새로고침한 뒤 다시 시도해 주세요.'], code: 'METHOD_NOT_ALLOWED', status: 405 }));
   }
@@ -454,46 +511,47 @@ export async function handler(event) {
 
   account = reservedAccount;
 
-  const timeoutMs = isAdvanced ? 45000 : 30000;
+  const timeoutMs = 60000;
+  const analysisStartedAt = Date.now();
   let timeoutId = null;
 
   try {
     const instruction = systemPrompt;
     const userText = '사진 속 풀이가 있는 문제를 번호별로 모두 분리해 각각 검산하고 최종 JSON만 반환하세요.';
 
-    const requestBody = JSON.stringify({
-      systemInstruction: { parts: [{ text: instruction }] },
-      contents: [{
+    const contents = [{
         role: 'user',
         parts: [
           { text: userText },
           { inlineData: { mimeType: imageMimeType, data: imageBase64 } }
         ]
-      }],
-      generationConfig: {
+      }];
+
+    const controller = new AbortController();
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    onProgress('AI_ANALYZING');
+    const ai = new GoogleGenAI({ apiKey });
+    const responseStream = await ai.models.generateContentStream({
+      model,
+      contents,
+      config: {
+        systemInstruction: instruction,
         maxOutputTokens: 6000,
         temperature: 0.2,
         seed: 42,
         responseMimeType: 'application/json',
         responseJsonSchema: resultSchema,
-        thinkingConfig: { thinkingLevel: isAdvanced ? 'HIGH' : (isMiddle ? 'MEDIUM' : 'LOW') }
+        thinkingConfig: { thinkingLevel: isAdvanced ? 'HIGH' : (isMiddle ? 'MEDIUM' : 'LOW') },
+        abortSignal: controller.signal
       }
     });
 
-    const controller = new AbortController();
-    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'x-goog-api-key': apiKey,
-        'Content-Type': 'application/json'
-      },
-      body: requestBody
-    });
+    const streamed = await readGeminiSdkStream(responseStream, onProgress);
+    const rawResponseBody = streamed.raw;
+    const data = streamed.data;
+    onProgress('RESULT_ORGANIZING');
     clearTimeout(timeoutId);
     timeoutId = null;
-    const data = await response.json().catch(() => ({}));
 
     // 실제 API 입력·출력·추론 토큰을 현재 로그인 아이디에 누적합니다.
     const responseUsage = getResponseTokenUsage(data);
@@ -505,49 +563,6 @@ export async function handler(event) {
       } catch (tokenError) {
         console.error('TOKEN_TRACKING_FAILED', tokenError);
       }
-    }
-
-    if (!response.ok) {
-      const message = data?.error?.message || 'Gemini API 오류';
-      let code = data?.error?.status || data?.error?.code || 'GEMINI_ERROR';
-      const lower = message.toLowerCase();
-      let title = 'AI 서비스 호출 실패';
-      let reason = message;
-      let solution = ['잠시 후 다시 분석해 주세요.'];
-
-      if (response.status === 401 || response.status === 403 || lower.includes('api key')) {
-        title = 'API 인증 실패';
-        reason = 'Gemini API 키가 없거나 올바르지 않습니다.';
-        solution = ['Netlify의 GEMINI_API_KEY 값을 확인하세요.', '환경변수 수정 후 다시 배포하세요.'];
-      } else if (code === 'RESOURCE_EXHAUSTED' || lower.includes('quota') || lower.includes('billing')) {
-        title = 'API 사용 한도 초과';
-        reason = 'Gemini API 크레딧 또는 사용 한도를 초과했습니다.';
-        solution = ['Google AI Studio의 Billing과 사용 한도를 확인하세요.', '결제 설정 후 다시 시도하세요.'];
-      } else if (response.status === 429) {
-        title = '요청이 너무 많습니다';
-        reason = '짧은 시간에 요청이 몰려 분석이 제한되었습니다.';
-        solution = ['잠시 기다린 뒤 다시 분석해 주세요.', '한 번에 올리는 사진 수를 줄여 다시 시도하세요.'];
-      } else if (response.status === 500) {
-        code = 'GEMINI_INTERNAL_ERROR';
-        title = 'Gemini 내부 처리 오류';
-        reason = 'Gemini가 요청을 처리하는 중 내부 오류를 반환했습니다.';
-        solution = ['잠시 후에 다시 시도해 주세요.'];
-      } else if (response.status === 502) {
-        title = 'AI 응답 처리 오류';
-        reason = '사진의 문제나 풀이가 많아 AI 응답을 정상적으로 처리하지 못했습니다.';
-        solution = ['사진을 반반 나눠서 다시 촬영해 주세요.'];
-      } else if (response.status === 503 || code === 'UNAVAILABLE' || lower.includes('temporarily unavailable')) {
-        code = 'GEMINI_UNAVAILABLE';
-        title = 'AI 서버 일시 혼잡';
-        reason = 'AI 분석 서버가 일시적으로 응답하지 않습니다.';
-        solution = ['잠시 후에 다시 시도해 주세요.'];
-      } else if (response.status === 404) {
-        title = 'AI 모델 설정 오류';
-        reason = '설정된 모델을 찾을 수 없거나 사용할 권한이 없습니다.';
-        solution = ['Netlify의 GEMINI_MODEL 값을 확인하세요.', '사용 가능한 모델명으로 수정한 뒤 다시 배포하세요.'];
-      }
-
-      return json(response.status, errorBody({ title, error: message, reason, solution, code, status: response.status, account }));
     }
 
     const finishReason = data?.candidates?.[0]?.finishReason || '';
@@ -565,9 +580,10 @@ export async function handler(event) {
 
     const outputText = getOutputText(data);
     const parsed = extractJson(outputText);
-    const rawProblems = Array.isArray(parsed?.problems) ? parsed.problems : [];
+    const hasProblemArray = Array.isArray(parsed?.problems);
+    const rawProblems = hasProblemArray ? parsed.problems : [];
 
-    if (!rawProblems.length) {
+    if (!hasProblemArray) {
       const blockReason = data?.promptFeedback?.blockReason;
 
       return json(502, errorBody({
@@ -577,7 +593,11 @@ export async function handler(event) {
         code: 'INVALID_AI_RESPONSE',
         status: 502,
         detail: outputText.slice(0, 300),
-        account
+        account,
+        errorSource: 'GEMINI',
+        responseContentType: 'text/event-stream',
+        responseBody: rawResponseBody.slice(0, 2000),
+        elapsedMs: Date.now() - analysisStartedAt
       }));
     }
 
@@ -639,14 +659,106 @@ export async function handler(event) {
   } catch (error) {
     if (timeoutId) clearTimeout(timeoutId);
 
-    if (error?.name === 'AbortError') {
+    const errorMessage = String(error?.message || error?.cause?.message || '');
+    const inferredStatus = Number(
+      error?.status ||
+      error?.statusCode ||
+      (Number.isFinite(Number(error?.code)) ? error.code : 0) ||
+      errorMessage.match(/\b([45]\d\d)\b/)?.[1] ||
+      0
+    );
+    const upperMessage = errorMessage.toUpperCase();
+
+    if (error?.name === 'AbortError' || upperMessage.includes('ABORT') || upperMessage.includes('TIMEOUT')) {
       return json(504, errorBody({
         title: '분석 시간 초과',
         reason: '사진에 문제나 풀이가 많거나 이미지가 복잡해 제한 시간 안에 분석이 끝나지 않았습니다.',
         solution: ['사진을 반반 나눠서 다시 촬영해 주세요.'],
-        code: 'ANALYSIS_TIMEOUT',
+        code: 'APP_ANALYSIS_TIMEOUT',
         status: 504,
-        account
+        account,
+        errorSource: 'APP',
+        elapsedMs: Date.now() - analysisStartedAt
+      }));
+    }
+
+    if (inferredStatus === 429 || upperMessage.includes('RESOURCE_EXHAUSTED') || upperMessage.includes('QUOTA')) {
+      return json(429, errorBody({
+        title: 'API 사용 한도 초과',
+        error: errorMessage,
+        reason: 'Gemini API 크레딧 또는 요청 한도를 초과했습니다.',
+        solution: ['Google AI Studio의 Billing과 사용 한도를 확인하세요.', '잠시 후 다시 분석해 주세요.'],
+        code: 'RESOURCE_EXHAUSTED',
+        status: 429,
+        account,
+        errorSource: 'GEMINI',
+        responseContentType: 'SDK_ERROR',
+        responseBody: errorMessage.slice(0, 2000),
+        elapsedMs: Date.now() - analysisStartedAt
+      }));
+    }
+
+    if (inferredStatus === 503 || upperMessage.includes('UNAVAILABLE')) {
+      return json(503, errorBody({
+        title: 'AI 서버 일시 혼잡',
+        error: errorMessage,
+        reason: 'AI 분석 서버가 일시적으로 응답하지 않습니다.',
+        solution: ['잠시 후에 다시 시도해 주세요.'],
+        code: 'GEMINI_UNAVAILABLE',
+        status: 503,
+        account,
+        errorSource: 'GEMINI',
+        responseContentType: 'SDK_ERROR',
+        responseBody: errorMessage.slice(0, 2000),
+        elapsedMs: Date.now() - analysisStartedAt
+      }));
+    }
+
+    if (inferredStatus === 401 || inferredStatus === 403 || upperMessage.includes('API KEY')) {
+      return json(inferredStatus || 401, errorBody({
+        title: 'API 인증 실패',
+        error: errorMessage,
+        reason: 'Gemini API 키가 없거나 올바르지 않습니다.',
+        solution: ['Netlify의 GEMINI_API_KEY 값을 확인하세요.', '환경변수 수정 후 다시 배포하세요.'],
+        code: 'GEMINI_AUTH_ERROR',
+        status: inferredStatus || 401,
+        account,
+        errorSource: 'GEMINI',
+        responseContentType: 'SDK_ERROR',
+        responseBody: errorMessage.slice(0, 2000),
+        elapsedMs: Date.now() - analysisStartedAt
+      }));
+    }
+
+    if (inferredStatus === 404) {
+      return json(404, errorBody({
+        title: 'AI 모델 설정 오류',
+        error: errorMessage,
+        reason: '설정된 모델을 찾을 수 없거나 사용할 권한이 없습니다.',
+        solution: ['설정된 Gemini 모델명을 확인하세요.'],
+        code: 'NOT_FOUND',
+        status: 404,
+        account,
+        errorSource: 'GEMINI',
+        responseContentType: 'SDK_ERROR',
+        responseBody: errorMessage.slice(0, 2000),
+        elapsedMs: Date.now() - analysisStartedAt
+      }));
+    }
+
+    if (inferredStatus === 500 || inferredStatus === 502) {
+      return json(inferredStatus, errorBody({
+        title: inferredStatus === 500 ? 'Gemini 내부 처리 오류' : 'AI 응답 처리 오류',
+        error: errorMessage,
+        reason: inferredStatus === 500 ? 'Gemini가 요청을 처리하는 중 내부 오류를 반환했습니다.' : 'Gemini 스트림을 정상적으로 처리하지 못했습니다.',
+        solution: inferredStatus === 500 ? ['잠시 후 다시 분석해 주세요.'] : ['사진을 반반 나눠서 다시 촬영해 주세요.'],
+        code: inferredStatus === 500 ? 'GEMINI_INTERNAL_ERROR' : 'INVALID_ERROR_RESPONSE',
+        status: inferredStatus,
+        account,
+        errorSource: 'GEMINI',
+        responseContentType: 'SDK_ERROR',
+        responseBody: errorMessage.slice(0, 2000),
+        elapsedMs: Date.now() - analysisStartedAt
       }));
     }
 
@@ -655,11 +767,101 @@ export async function handler(event) {
       error: error?.message || '서버 오류가 발생했습니다.',
       reason: error?.cause?.message || '서버에서 요청을 처리하는 중 예기치 않은 오류가 발생했습니다.',
       solution: ['잠시 후에 다시 시도해 주세요.'],
-      code: 'SERVER_ERROR',
+      code: 'STREAM_INTERRUPTED',
       status: 500,
       detail: error?.stack || '',
-      account
+      account,
+      errorSource: 'APP',
+      responseContentType: 'SDK_ERROR',
+      responseBody: errorMessage.slice(0, 2000),
+      elapsedMs: Date.now() - analysisStartedAt
     }));
 
   }
+}
+
+function requestToLegacyEvent(request) {
+  const headers = {};
+  request.headers.forEach((value, key) => { headers[key] = value; });
+  return request.text().then((body) => ({
+    httpMethod: request.method,
+    headers,
+    body
+  }));
+}
+
+function legacyResultData(result) {
+  try { return JSON.parse(result?.body || '{}'); } catch {
+    return errorBody({
+      title: '스트림 결과 해석 실패',
+      reason: '분석 함수의 최종 응답을 해석하지 못했습니다.',
+      solution: ['잠시 후 다시 분석해 주세요.'],
+      code: 'INVALID_ERROR_RESPONSE',
+      status: Number(result?.statusCode) || 500,
+      errorSource: 'APP'
+    });
+  }
+}
+
+export default async function handler(request) {
+  const encoder = new TextEncoder();
+  let closed = false;
+  let heartbeatId;
+  const send = (controller, payload) => {
+    if (closed) return;
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+  };
+
+  const body = new ReadableStream({
+    start(controller) {
+      send(controller, { type: 'progress', stage: 'CONNECTED' });
+      heartbeatId = setInterval(() => {
+        if (!closed) controller.enqueue(encoder.encode(`: heartbeat ${Date.now()}\n\n`));
+      }, 5000);
+
+      (async () => {
+        try {
+          const event = await requestToLegacyEvent(request);
+          const result = await runAnalysis(event, (stage) => send(controller, { type: 'progress', stage }));
+          send(controller, {
+            type: 'result',
+            status: Number(result?.statusCode) || 500,
+            data: legacyResultData(result)
+          });
+        } catch (error) {
+          send(controller, {
+            type: 'result',
+            status: 500,
+            data: errorBody({
+              title: '스트림 처리 오류',
+              error: error?.message || '스트림 오류가 발생했습니다.',
+              reason: '분석 스트림을 처리하는 중 연결이 종료되었습니다.',
+              solution: ['잠시 후 다시 분석해 주세요.'],
+              code: 'STREAM_INTERRUPTED',
+              status: 500,
+              detail: error?.stack || '',
+              errorSource: 'APP'
+            })
+          });
+        } finally {
+          closed = true;
+          clearInterval(heartbeatId);
+          controller.close();
+        }
+      })();
+    },
+    cancel() {
+      closed = true;
+      clearInterval(heartbeatId);
+    }
+  });
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no'
+    }
+  });
 }
