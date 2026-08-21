@@ -162,13 +162,13 @@ correctExpression에는 같은 지점의 식을 올바르게 고친 결과를 �
 
 difference에는 두 식에서 실제로 서로 다른 부분만 구체적으로 작성하라. 예: "학생식은 +10b, 올바른 식은 -10b".
 
-틀림 판정 직전에 studentExpression과 correctExpression을 각각 직접 계산하고, difference 및 message의 설명이 두 식의 실제 차이와 일치하는지 다시 확인하라.
+틀림 판정 직전에 studentExpression과 correctExpression을 각각 직접 계산하고, difference가 두 식의 실제 차이와 일치하는지 다시 확인하라.
 
-studentExpression과 correctExpression이 같거나 대수적으로 동치인 경우, 구체적인 차이를 제시할 수 없는 경우, difference와 message가 식의 실제 내용과 모순되는 경우에는 verdict="틀림"을 반환하지 마라. 식이 참이면 verdict="맞음", 판독이나 검산이 불확실하면 verdict="확인 필요"로 반환하라.
+studentExpression과 correctExpression이 같거나 대수적으로 동치인 경우, 구체적인 차이를 제시할 수 없는 경우, difference가 식의 실제 내용과 모순되는 경우에는 verdict="틀림"을 반환하지 마라. 식이 참이면 verdict="맞음", 판독이나 검산이 불확실하면 verdict="확인 필요"로 반환하라.
 
 학생이 실제로 쓰지 않은 항, 부호 또는 수학적 기호를 썼다고 주장하지 마라.
 
-verdict="틀림"의 difference와 message에는 "오류가 없다", "오류가 없습니다", "맞습니다", "맞음"이라는 표현을 사용하지 마라. 이 표현이 필요할 정도로 학생식이 옳다면 verdict="맞음"으로 반환하라.
+verdict="틀림"의 difference에는 "오류가 없다", "오류가 없습니다", "맞습니다", "맞음"이라는 표현을 사용하지 마라. 이 표현이 필요할 정도로 학생식이 옳다면 verdict="맞음"으로 반환하라.
 
 5. (오류유형 분류)
 verdict="틀림"일 때만 errorType을 분류하라.
@@ -179,15 +179,14 @@ verdict가 "맞음", "확인 필요", "판독 불가"이면 errorType은 반드�
 
 반환 규칙:
 1. 학생이 작성한 풀이가 존재하고 원본 문제의 조건, 풀이 과정 및 최종 답에서 오류가 발견되지 않으면 verdict="맞음", message="맞음"으로 하고 studentExpression, correctExpression, difference는 모두 빈 문자열로 한다.
-2. 문제가 있으면 verdict="틀림"으로 하고 최초 오류 한 곳만 반환한다.
+2. 문제가 있으면 verdict="틀림"으로 하고 최초 오류 한 곳만 반환하며 message는 빈 문자열로 한다.
 3. verdict="틀림"일 때 studentExpression, correctExpression, difference 중 하나라도 정확히 작성할 수 없으면 verdict="확인 필요"로 바꾼다.
-4. message에는 해당 식이 왜 틀렸는지만 한국어 한 문장으로 간단히 쓴다.
-5. message에 "오류가 난 식", "문제점", "오류 유형", "계산 오류입니다", "부호 오류입니다" 같은 제목이나 유형명은 넣지 않는다.
-6. studentExpression과 correctExpression에는 \( \), \[ \], $, $$ 같은 수식 구분자를 넣지 않는다.
+4. verdict="틀림"일 때 틀린 이유나 해설을 생성하지 않는다.
+5. studentExpression과 correctExpression에는 \( \), \[ \], $, $$ 같은 수식 구분자를 넣지 않는다.
 7. 분수는 \frac{a}{b}, 제곱은 x^2, 근호는 \sqrt{x}, 곱셈은 \times, 나눗셈은 \div로 작성한다.
 8. 부등호와 기호는 \le, \ge, \ne, \pm, \therefore처럼 올바른 LaTeX 명령을 사용한다.
 9. 유니코드 위첨자(², ³), 특수 분수(½), 일반 슬래시 분수(a/b)를 수학식 대신 사용하지 않는다.
-10. message와 difference 안에 수식이 꼭 필요하면 해당 수식만 반드시 \( ... \)로 감싼다.
+10. difference 안에 수식이 꼭 필요하면 해당 수식만 반드시 \( ... \)로 감싼다.
 11. 첫 오류 식을 정확히 읽을 수 없으면 verdict="확인 필요"로 하고 세 증거 필드를 모두 빈 문자열로 한다.
 12. JSON 문자열 안의 모든 LaTeX 백슬래시는 반드시 이중 백슬래시로 이스케이프한다. 예: "2\\times5", "\\frac{1}{2}".
 13. 괄호는 가능하면 일반 괄호를 사용하고 \left, \right는 사용하지 않는다.
@@ -197,7 +196,7 @@ verdict가 "맞음", "확인 필요", "판독 불가"이면 errorType은 반드�
 - studentExpression: "(-5-b)^2=25-10b+b^2"
 - correctExpression: "(-5-b)^2=25+10b+b^2"
 - difference: "학생식은 -10b, 올바른 식은 +10b"
-- message: "제곱식을 전개할 때 일차항의 부호를 반대로 계산했습니다."
+- message: ""
 
 사진에 원본 문제가 없거나 읽을 수 없을 때는 원래 문제의 정답, 모범풀이, 첫 오류 이후의 연쇄 오류, 긴 설명을 작성하지 않는다.
 불확실하면 verdict="확인 필요", 읽을 수 없으면 verdict="판독 불가"로 하고 세 증거 필드를 모두 빈 문자열로 한다.
@@ -463,14 +462,13 @@ async function runAnalysis(event, onProgress = () => {}) {
   }
   const [, imageMimeType, imageBase64] = imageMatch;
 
-  const requestedMode = String(payload.analysisMode || 'ADVANCED').toUpperCase();
-  const isAdvanced = requestedMode === 'ADVANCED';
-  const isMiddle = requestedMode === 'MIDDLE';
-  const analysisMode = isAdvanced ? 'ADVANCED' : (isMiddle ? 'MIDDLE' : 'GENERAL');
+  const requestedMode = String(payload.analysisMode || 'MEDIUM').toUpperCase();
+  const analysisMode = requestedMode === 'GENERAL' || requestedMode === 'LOW' ? 'GENERAL' : 'MEDIUM';
+  const isMedium = analysisMode === 'MEDIUM';
   const model = 'gemini-3.6-flash';
-  const usageModel = isAdvanced
-    ? 'gemini-3.6-flash-high'
-    : (isMiddle ? 'gemini-3.6-flash-medium' : 'gemini-3.6-flash-low');
+  const usageModel = isMedium
+    ? 'gemini-3.6-flash-medium'
+    : 'gemini-3.6-flash-low';
 
   let account = auth.account;
 
@@ -537,11 +535,11 @@ async function runAnalysis(event, onProgress = () => {}) {
       config: {
         systemInstruction: instruction,
         maxOutputTokens: 6000,
-        temperature: 0.2,
+        temperature: 0,
         seed: 42,
         responseMimeType: 'application/json',
         responseJsonSchema: resultSchema,
-        thinkingConfig: { thinkingLevel: isAdvanced ? 'HIGH' : (isMiddle ? 'MEDIUM' : 'LOW') },
+        thinkingConfig: { thinkingLevel: isMedium ? 'MEDIUM' : 'LOW' },
         abortSignal: controller.signal
       }
     });
@@ -627,6 +625,10 @@ async function runAnalysis(event, onProgress = () => {}) {
           verdict = '맞음';
           message = '맞음';
         }
+      }
+
+      if (verdict === '틀림') {
+        message = '틀림';
       }
 
       if (verdict === '맞음') {

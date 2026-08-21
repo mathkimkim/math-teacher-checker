@@ -1104,7 +1104,7 @@ function StudentAccessManager({ token, onClose }) {
 }
 
 function StudentApp() {
-  const [token,setToken]=useState(localStorage.getItem('math_checker_student_token')||''), [student,setStudent]=useState(null), [code,setCode]=useState(''), [error,setError]=useState(''), [busy,setBusy]=useState(false), [items,setItems]=useState([]), [analysisMode,setAnalysisMode]=useState('ADVANCED');
+  const [token,setToken]=useState(localStorage.getItem('math_checker_student_token')||''), [student,setStudent]=useState(null), [code,setCode]=useState(''), [error,setError]=useState(''), [busy,setBusy]=useState(false), [items,setItems]=useState([]), [analysisMode,setAnalysisMode]=useState('MEDIUM');
   const [splitTarget,setSplitTarget]=useState(null);
   useEffect(()=>{if(token)apiRequest('student-access',{token}).then(d=>setStudent(d.student)).catch(()=>{localStorage.removeItem('math_checker_student_token');setToken('');});},[token]);
   async function login(e){e.preventDefault();setError('');try{const d=await apiRequest('student-access',{method:'POST',body:{code}});localStorage.setItem('math_checker_student_token',d.token);setToken(d.token);setStudent(d.student);}catch(x){setError(x.message);}}
@@ -1165,7 +1165,7 @@ function StudentApp() {
   }
   async function retry(item){if(busy)return;setBusy(true);await analyzeOneStudent(item);setBusy(false);}
   if(!token||!student)return <main className="studentPortal"><section className="studentLoginCard"><div className="brandMark">✓</div><span>풀이체커 학생용</span><h1>내 풀이 촬영하기</h1><p>선생님에게 받은 6자리 접속코드를 입력하세요.</p><form onSubmit={login}><input inputMode="numeric" maxLength="6" value={code} onChange={e=>setCode(e.target.value.replace(/\D/g,''))} placeholder="6자리 접속코드"/>{error?<div className="authAlert error">{error}</div>:null}<button>시작하기</button></form></section></main>;
-  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='ADVANCED'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('ADVANCED')}>HIGH</button><button className={analysisMode==='MIDDLE'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('MIDDLE')}>MED</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>{analysisStageText(item.analysisStage)}</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.splitFromError&&item.status==='ready'?<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
+  return <main className="studentPortal"><header className="studentPortalTop"><div><span>풀이체커</span><strong>{student.name} 학생</strong></div><button onClick={()=>{localStorage.removeItem('math_checker_student_token');setToken('');setStudent(null);}}>코드 변경</button></header><section className="studentUploadCard"><h1>풀이 사진을 올려주세요</h1><p>최대 10장까지 촬영하거나 선택할 수 있어요.</p><div className="studentModeToggle"><button className={analysisMode==='MEDIUM'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('MEDIUM')}>MED</button><button className={analysisMode==='GENERAL'?'active':''} disabled={busy} onClick={()=>setAnalysisMode('GENERAL')}>LOW</button></div><label><input type="file" accept="image/*" capture="environment" multiple hidden onChange={e=>add(e.target.files)}/>사진 촬영·선택</label><button disabled={!items.some(x=>x.status==='ready'||x.status==='error')||busy} onClick={analyze}>{busy?'분석 중...':'분석 시작'}</button></section><section className="studentItemList">{items.map(item=><article key={item.id}><img src={item.preview} alt={item.name}/><div><strong>{item.name}</strong>{item.status==='ready'?<p>분석할 준비가 됐어요.</p>:null}{item.status==='analyzing'?<p>{analysisStageText(item.analysisStage)}</p>:null}{item.status==='retrying'?<p>일시 오류로 5초 후 자동 재시도 중입니다...</p>:null}{item.status==='done'?<p className="studentSuccess">✓ 분석 성공</p>:null}{item.splitFromError&&item.status==='ready'?<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button>:null}{item.status==='error'?<><AnalysisErrorCard error={item.error}/>{[502,504].includes(Number(item.error?.status))?<button className="studentRetry" disabled={busy} onClick={()=>setSplitTarget(item)}>사진 나누기</button>:null}<button className="studentRetry" disabled={busy} onClick={()=>retry(item)}>재분석</button></>:null}<button className="studentLocalDelete" disabled={item.status==='analyzing'||item.status==='retrying'} onClick={()=>removeLocal(item.id)}>삭제</button></div></article>)}</section><p className="studentPrivacyNote">사진과 상세분석은 3일 후 자동 삭제됩니다.</p>{splitTarget?<SplitModal item={splitTarget} onApply={splitLocal} onClose={()=>setSplitTarget(null)}/>:null}</main>;
 }
 
 function ImageLightbox({ src, alt, onClose }) {
@@ -1315,7 +1315,7 @@ function ResultCard({ item, onCopy, onChangeVerdict, hideCorrect, readOnly = fal
         const errorType = verdict === '틀림' ? String(problem?.errorType || '').trim() : '';
         const originalVerdict = problem?.originalVerdict || verdict;
         const canShowOriginalError = !problem?.manuallyChanged || originalVerdict === '틀림';
-        const showMessage = verdict !== '맞음' && canShowOriginalError && message && message !== verdict && message !== '맞음';
+        const showMessage = verdict !== '맞음' && verdict !== '틀림' && canShowOriginalError && message && message !== verdict && message !== '맞음';
         const showEvidence = verdict === '틀림' && canShowOriginalError && studentExpression && correctExpression;
 
         return (
@@ -1474,7 +1474,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
   const [loginMode, setLoginMode] = useState(null);
   const [hideCorrect, setHideCorrect] = useState(false);
   const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
-  const [analysisMode, setAnalysisMode] = useState('ADVANCED');
+  const [analysisMode, setAnalysisMode] = useState('MEDIUM');
   const [studentName, setStudentName] = useState('');
   const [showStudentSummary, setShowStudentSummary] = useState(false);
   const [summaryStudentName, setSummaryStudentName] = useState('');
@@ -1856,7 +1856,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
       if (verdict === '틀림' && errorType) details.push(`오류유형: ${errorType}`);
       if (verdict === '틀림' && canShowOriginalError && studentExpression) details.push(`학생식: ${studentExpression}`);
       if (verdict === '틀림' && canShowOriginalError && correctExpression) details.push(`올바른 식: ${correctExpression}`);
-      if (verdict !== '맞음' && canShowOriginalError && message && message !== verdict && message !== '맞음') details.push(message);
+      if (verdict !== '맞음' && verdict !== '틀림' && canShowOriginalError && message && message !== verdict && message !== '맞음') details.push(message);
       return details.length
         ? `${number}번: ${verdict}\n${details.join('\n')}`
         : `${number}번: ${verdict}`;
@@ -1984,8 +1984,7 @@ function CheckerApp({ auth, onLogin, onLogout, onAccountUpdate }) {
 
         <div className="topbarActions">
           <div className="modelModeToggle" aria-label="분석 모델 선택">
-            <button type="button" className={analysisMode === 'ADVANCED' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('ADVANCED')}>HIGH</button>
-            <button type="button" className={analysisMode === 'MIDDLE' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('MIDDLE')}>MED</button>
+            <button type="button" className={analysisMode === 'MEDIUM' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('MEDIUM')}>MED</button>
             <button type="button" className={analysisMode === 'GENERAL' ? 'active' : ''} disabled={busy} onClick={() => setAnalysisMode('GENERAL')}>LOW</button>
           </div>
           <span className="analysisTimeBadge">분석시간 <b>{formatAnalysisSeconds(analysisElapsedSeconds)}</b></span>
@@ -2365,7 +2364,8 @@ function AdminApp({ token, onLogout }) {
       return {
         아이디: account.login_id, 총한도: account.limit_count, 사용: account.used_count,
         남음: Math.max(0, account.limit_count - account.used_count), 상태: account.active ? '사용중' : '중지',
-        'HIGH 입력토큰': advanced.input, 'HIGH 일반출력': advanced.answer, 'HIGH 추론': advanced.thinking, 'HIGH 총토큰': advanced.total, 'HIGH 비용(USD)': advanced.cost,
+        'HIGH 입력토큰(과거)': advanced.input, 'HIGH 일반출력(과거)': advanced.answer, 'HIGH 추론(과거)': advanced.thinking, 'HIGH 총토큰(과거)': advanced.total, 'HIGH 비용(USD·과거)': advanced.cost,
+        'MED 입력토큰': middle.input, 'MED 일반출력': middle.answer, 'MED 추론': middle.thinking, 'MED 총토큰': middle.total, 'MED 비용(USD)': middle.cost,
         'LOW 입력토큰': general.input, 'LOW 일반출력': general.answer, 'LOW 추론': general.thinking, 'LOW 총토큰': general.total, 'LOW 비용(USD)': general.cost,
         '총비용(USD)': advanced.cost + general.cost + middle.cost, 생성일: account.created_at
       };
@@ -2391,7 +2391,7 @@ function AdminApp({ token, onLogout }) {
         <div><span>전체 일반출력</span><b>{formatCompactCount(totalAnswerTokens)}</b></div>
         <div><span>전체 추론토큰</span><b>{formatCompactCount(totalThinkingTokens)}</b></div>
         <div><span>누적 예상비용</span><b>{formatUsd(totalEstimatedCost)} USD</b></div>
-        <p>HIGH·LOW 실제 사용량 기준</p>
+        <p>HIGH(과거)·MED·LOW 실제 사용량 기준</p>
       </section>
       <section className="adminErrorPanel" aria-label="출력 및 추론 토큰 구간 통계">
         <div className="adminErrorHeading">
@@ -2399,10 +2399,11 @@ function AdminApp({ token, onLogout }) {
           <strong>총 {usage.length.toLocaleString()}건</strong>
         </div>
         <div className="adminErrorTableWrap">
-          <table className="adminErrorTable"><thead><tr><th>토큰 구간</th><th>HIGH</th><th>LOW</th></tr></thead><tbody>
+          <table className="adminErrorTable"><thead><tr><th>토큰 구간</th><th>HIGH(과거)</th><th>MED</th><th>LOW</th></tr></thead><tbody>
             {tokenRanges.map((range) => <tr key={range.label}>
               <td><b>{range.label}</b></td>
               <td>{formatRangeCount('HIGH', range)}</td>
+              <td>{formatRangeCount('MED', range)}</td>
               <td>{formatRangeCount('LOW', range)}</td>
             </tr>)}
           </tbody></table>
@@ -2435,12 +2436,12 @@ function AdminApp({ token, onLogout }) {
       </section>
       <section className="adminCreate"><h2>새 계정 만들기</h2><div className="adminFormRow"><input placeholder="아이디" value={form.loginId} onChange={(e)=>setForm({...form,loginId:e.target.value})}/><input placeholder="비밀번호" type="password" value={form.password} onChange={(e)=>setForm({...form,password:e.target.value})}/><input type="number" min="0" value={form.limitCount} onChange={(e)=>setForm({...form,limitCount:e.target.value})}/><button onClick={()=>action('create',{...form,limitCount:Number(form.limitCount)})}>계정 생성</button></div></section>
       {error?<div className="authAlert error">{error}</div>:null}{message?<div className="authAlert success">{message}</div>:null}
-      <section className="adminTableWrap"><table className="adminTable"><thead><tr><th>아이디</th><th>총 한도</th><th>사용</th><th>남음</th><th>HIGH 토큰·비용</th><th>LOW 토큰·비용</th><th>총비용(USD)</th><th>상태</th><th>관리</th></tr></thead><tbody>
+      <section className="adminTableWrap"><table className="adminTable"><thead><tr><th>아이디</th><th>총 한도</th><th>사용</th><th>남음</th><th>HIGH 토큰·비용(과거)</th><th>MED 토큰·비용</th><th>LOW 토큰·비용</th><th>총비용(USD)</th><th>상태</th><th>관리</th></tr></thead><tbody>
         {accounts.map(a=>{
           const advanced = modelUsage(a.id, ['gemini-3.6-flash-high', 'gemini-3.6-flash-pro', 'gemini-3.1-pro-preview', 'gemini-2.5-pro', 'gemini-3.6-flash-light', 'gemini-3.5-flash', 'gemini-3.6-flash']);
           const general = modelUsage(a.id, ['gemini-3.6-flash-low']);
           const middle = modelUsage(a.id, ['gemini-3.6-flash-medium', 'gemini-3.6-flash-middle']);
-          return <tr key={a.id}><td><b>{a.login_id}</b></td><td>{a.limit_count}</td><td>{a.used_count}</td><td>{Math.max(0,a.limit_count-a.used_count)}</td><td title={`입력 ${advanced.input.toLocaleString()} / 일반출력 ${advanced.answer.toLocaleString()} / 추론 ${advanced.thinking.toLocaleString()}`}><span>입 {formatCompactCount(advanced.input)} · 출 {formatCompactCount(advanced.answer)} · 추 {formatCompactCount(advanced.thinking)}</span><br/><b>총 {formatCompactCount(advanced.total)} · {formatUsd(advanced.cost)}</b></td><td title={`입력 ${general.input.toLocaleString()} / 일반출력 ${general.answer.toLocaleString()} / 추론 ${general.thinking.toLocaleString()}`}><span>입 {formatCompactCount(general.input)} · 출 {formatCompactCount(general.answer)} · 추 {formatCompactCount(general.thinking)}</span><br/><b>총 {formatCompactCount(general.total)} · {formatUsd(general.cost)}</b></td><td><b>{formatUsd(advanced.cost + general.cost + middle.cost)}</b></td><td>{a.active?'사용중':'중지'}</td><td><div className="adminButtons">
+          return <tr key={a.id}><td><b>{a.login_id}</b></td><td>{a.limit_count}</td><td>{a.used_count}</td><td>{Math.max(0,a.limit_count-a.used_count)}</td><td title={`입력 ${advanced.input.toLocaleString()} / 일반출력 ${advanced.answer.toLocaleString()} / 추론 ${advanced.thinking.toLocaleString()}`}><span>입 {formatCompactCount(advanced.input)} · 출 {formatCompactCount(advanced.answer)} · 추 {formatCompactCount(advanced.thinking)}</span><br/><b>총 {formatCompactCount(advanced.total)} · {formatUsd(advanced.cost)}</b></td><td title={`입력 ${middle.input.toLocaleString()} / 일반출력 ${middle.answer.toLocaleString()} / 추론 ${middle.thinking.toLocaleString()}`}><span>입 {formatCompactCount(middle.input)} · 출 {formatCompactCount(middle.answer)} · 추 {formatCompactCount(middle.thinking)}</span><br/><b>총 {formatCompactCount(middle.total)} · {formatUsd(middle.cost)}</b></td><td title={`입력 ${general.input.toLocaleString()} / 일반출력 ${general.answer.toLocaleString()} / 추론 ${general.thinking.toLocaleString()}`}><span>입 {formatCompactCount(general.input)} · 출 {formatCompactCount(general.answer)} · 추 {formatCompactCount(general.thinking)}</span><br/><b>총 {formatCompactCount(general.total)} · {formatUsd(general.cost)}</b></td><td><b>{formatUsd(advanced.cost + general.cost + middle.cost)}</b></td><td>{a.active?'사용중':'중지'}</td><td><div className="adminButtons">
           <button onClick={()=>action('add_limit',{accountId:a.id,amount:10})}>+10</button><button onClick={()=>action('add_limit',{accountId:a.id,amount:50})}>+50</button><button onClick={()=>action('add_limit',{accountId:a.id,amount:100})}>+100</button>
           <button onClick={()=>{const amount=Number(prompt('추가할 장수를 입력하세요.','500')); if(amount>0) action('add_limit',{accountId:a.id,amount});}}>직접 추가</button>
           <button onClick={()=>{const n=Number(prompt('총 분석 가능 장수를 입력하세요.',String(a.limit_count))); if(n>=0) action('set_limit',{accountId:a.id,limitCount:n});}}>한도 변경</button>
